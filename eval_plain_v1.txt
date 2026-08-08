@@ -1,0 +1,15 @@
+You are answering a medical multiple-choice question.
+
+Read the question and the answer options. Choose the single best answer.
+
+Respond with ONLY the letter of your chosen answer: A, B, C, or D.
+Do not explain. Do not restate the question. Do not add punctuation.
+Your entire response must be one character.
+
+QUESTION:
+{stem}
+
+OPTIONS:
+{options}
+
+ANSWER:

@@ -1,0 +1,164 @@
+# LiteracyMedQA — frozen run configuration
+# Nothing in this file changes mid-run. If it changes, bump `run.config_version`
+# and regenerate every affected artifact from scratch. Log the reason in CHANGELOG.md.
+
+run:
+  config_version: 1
+  seed: 20260807
+  # Set to false once the pilot gates pass and full generation begins.
+  pilot_mode: true
+  pilot_n: 100
+
+dataset:
+  source: medqa
+  # MedQA (Jin et al. 2021), US English, 4-option variant.
+  split: test
+  # NOTE: the US test split is ~1,273 items. N cannot exceed it.
+  # LOCK WITH MENTOR before full generation.
+  n_items: null            # <-- TODO: lock N with Kiran
+  stratify_by: null        # e.g. specialty, or null for simple random
+  base_file: data/medqa_base.jsonl
+  # Dong owns this file. Once committed, no item added or removed without a logged reason.
+
+levels:
+  a:
+    name: original_clinical
+    description: >
+      Unmodified MedQA stem. Third-person clinical vignette. No generation performed;
+      copied verbatim from the base file.
+    generated: false
+  b:
+    name: plain_firstperson
+    description: >
+      First-person patient retelling, plain language, well-formed. No jargon, but no
+      typos and no vagueness. Every clinical fact preserved.
+    generated: true
+  c:
+    name: lowliteracy_firstperson
+    description: >
+      First-person patient retelling, low health literacy. Casual register, typos,
+      hedged and vague symptom description, reported speech for lab values.
+      Every clinical fact still recoverable.
+    generated: true
+
+# WHY (b) AND (c) ARE BOTH FIRST-PERSON:
+# If only (c) switched to first person, the (a)->(c) contrast would confound
+# literacy with narrative perspective. Holding perspective constant across (b) and (c)
+# makes acc(b) - acc(c) a clean literacy effect. acc(a) - acc(c) remains the
+# headline ecological gap. Both are reported.
+
+models:
+  rewriter:
+    # Must NOT appear in `evaluated`. Generates levels (b) and (c).
+    provider: azure_openai
+    name: gpt-4o-mini
+    version: null          # <-- TODO: lock exact version string with Kiran
+    temperature: 0
+    top_p: 1
+    max_tokens: 1200
+    seed: 20260807
+
+  verifier:
+    # Must differ from rewriter (Kiran's constraint) AND from every evaluated model,
+    # so no model checks its own output. Free-tier open model keeps this stage off
+    # the paid budget entirely.
+    provider: nvidia_build
+    name: qwen/qwen2.5-72b-instruct
+    version: null          # <-- TODO: lock
+    temperature: 0
+    max_tokens: 400
+    seed: 20260807
+
+  evaluated:
+    - id: gpt_closed
+      provider: azure_openai
+      name: null           # <-- TODO: lock closed comparison model with Kiran
+      version: null
+      temperature: 0
+      max_tokens: 16
+      seed: 20260807
+    - id: llama3
+      provider: nvidia_build
+      name: meta/llama-3.3-70b-instruct
+      version: null
+      temperature: 0
+      max_tokens: 16
+      seed: 20260807
+    - id: medgemma
+      provider: local_hf   # self-hosted, Kaggle 2xT4 via vLLM
+      name: google/medgemma-4b-it
+      version: null        # pin the HF commit SHA, not the branch
+      temperature: 0
+      max_tokens: 16
+      seed: 20260807
+      dtype: float16
+
+# NOTE ON SEEDS: at temperature 0 sampling is already greedy, so seeds are belt-and-
+# braces rather than load-bearing. Not every provider honours a seed parameter, and
+# none guarantee determinism across model-version or backend changes. Pass it where
+# accepted, record it always, and never claim bitwise reproducibility on the strength
+# of it. The version pin is what actually carries reproducibility here.
+
+prompt_conditions:
+  - id: plain
+    template: prompts/eval_plain_v1.txt
+  - id: clarify_first
+    template: prompts/eval_clarify_v1.txt
+    # Intervention arm. Applied to level (c) only.
+
+generation:
+  rewriter_prompt: prompts/rewriter_v1.txt
+  max_regeneration_attempts: 3
+  # Items still failing fidelity after 3 attempts are DROPPED, not retried.
+  # Unlimited retries select for rewrites the filter happens to like.
+
+gates:
+  realism:
+    # Blind raters must NOT reliably tell rewrites from real patient text.
+    max_rater_accuracy: 0.75
+    # Level (c) readability must land near the real-patient corpus.
+    max_fk_grade_delta: 2.0
+    # Added after Yun et al. (2026), who used this scorer. Lets us show our
+    # manipulation is stronger than their lexical-only simplification
+    # (their technical median 4.52 -> plain 3.83).
+    jargon_scorer: chaojiang06/medreadme_medical_sentence_readability_prediction_CWI
+    target_jargon_delta_min: 0.69   # must beat the Yun et al. shift
+  fidelity:
+    min_filter_human_kappa: 0.6
+    manual_audit_n: 150
+
+parsing:
+  # Answer parsing must be solved before it becomes a confound.
+  force_single_letter: true
+  valid_letters: [A, B, C, D]
+  log_unparseable: true
+  # Unparseable responses are logged, never silently scored wrong.
+
+# Cost rates are USD per 1M tokens. VERIFY THESE AGAINST CURRENT PROVIDER PRICING
+# BEFORE TRUSTING ANY TOTAL — they change, and stale rates make the tracker lie.
+cost_rates_usd_per_1m:
+  gpt-4o-mini:
+    input: null            # <-- TODO: fill from provider pricing page
+    output: null
+  meta/llama-3.3-70b-instruct:
+    input: 0.0             # free tier
+    output: 0.0
+  google/medgemma-4b-it:
+    input: 0.0             # self-hosted
+    output: 0.0
+
+logging:
+  cost_log: logs/api_calls.jsonl
+  results_file: data/results.jsonl
+  # Yuka's schema. Every downstream number reads this one file.
+  results_schema:
+    - item_id
+    - model
+    - level
+    - prompt_condition
+    - predicted
+    - gold
+    - correct
+    - raw_output
+    - prompt_hash
+    - config_version

@@ -1,0 +1,21 @@
+You are answering a medical multiple-choice question. The question may be written by
+someone with limited health literacy, so it may be informal, imprecise, or contain
+spelling errors. The clinical information you need is present, even if it is not
+phrased in medical terms.
+
+Before answering, restate the question to yourself in clear clinical terms: identify the
+patient's age and sex, their presenting symptoms and duration, and any vital signs,
+laboratory values, or examination findings mentioned. Do not add information that is not
+stated. Then choose the single best answer.
+
+Respond with ONLY the letter of your chosen answer: A, B, C, or D.
+Do not show your restatement. Do not explain. Do not add punctuation.
+Your entire response must be one character.
+
+QUESTION:
+{stem}
+
+OPTIONS:
+{options}
+
+ANSWER:

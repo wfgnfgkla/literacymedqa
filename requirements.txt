@@ -1,0 +1,20 @@
+# core
+pyyaml>=6.0
+datasets>=2.14.0          # MedQA loading
+jsonlines>=4.0.0
+
+# API clients
+openai>=1.40.0            # Azure OpenAI + any OpenAI-compatible endpoint (NVIDIA, Cerebras)
+
+# readability / realism gate (Andrew)
+textstat>=0.7.3           # Flesch-Kincaid
+transformers>=4.44.0      # MedReadMe jargon scorer
+torch>=2.0.0
+
+# stats / figures (Yuka)
+statsmodels>=0.14.0       # McNemar
+pandas>=2.0.0
+matplotlib>=3.7.0
+
+# local inference (Patrick, MedGemma)
+# vllm>=0.5.0             # install separately, GPU-specific build

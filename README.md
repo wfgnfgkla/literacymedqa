@@ -79,10 +79,26 @@ src/
   cost_tracker.py        logs every API call
   merge_costs.py         combines per-person logs into a team total
   validate_config.py     pre-flight check
+  harness.py             run_model()/run_batch() -- calls Azure/NVIDIA/local vLLM
+                          through one interface, resume-safe
+  answer_parser.py       recovers A-D from raw model output; None (not a guess)
+                          when ambiguous or unparseable
+  sanity_check.py        50-item harness smoke test against published MedQA
+                          numbers, before trusting the harness for anything real
+tests/
+  test_parser.py         answer_parser.py unit tests, no network needed
+  test_harness.py        harness.py tests (resume-safety, crash-resilience,
+                          credential handling), isolated from real data/logs
 data/                    base set, rewrites, results
 logs/                    api call logs
 CHANGELOG.md             config and prompt version history
+KAGGLE_SETUP.md          cell-by-cell notebook setup for the harness + sanity check
 ```
+
+Run `pytest tests/` before trusting any change to `harness.py` or `answer_parser.py`.
+`python src/sanity_check.py --mock` exercises the full harness code path with zero
+API keys and zero GPU; drop `--mock` once real credentials and a running vLLM
+server are in place.
 
 ## Reproducibility
 

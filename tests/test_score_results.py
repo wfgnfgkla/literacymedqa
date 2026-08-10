@@ -1,4 +1,6 @@
 import math
+import csv
+import json
 import sys
 from pathlib import Path
 
@@ -8,6 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from score_results import (  # noqa: E402
+    main,
     literacy_gap_and_flips,
     mcnemar_by_model,
     score_results,
@@ -140,3 +143,55 @@ def test_mcnemar_all_tied_has_p_one():
     result = mcnemar_by_model(rows, prompt_condition="plain")[0]
     assert result["mcnemar_statistic"] == 0
     assert result["mcnemar_exact_p"] == 1
+
+
+def test_whole_scoring_path_detects_planted_gap(tmp_path):
+    # Plant an obvious effect: model m_gap gets all 10 clinical/original items
+    # right at level a and only 4/10 low-literacy items right at level c.
+    # The full scoring path should recover acc(a)=1.0, acc(c)=0.4, gap=0.6,
+    # and a 6/10 right-to-wrong flip rate from file input through CSV output.
+    rows = []
+    for idx in range(10):
+        item_id = f"synthetic_{idx:02d}"
+        rows.append(_row(item_id, "m_gap", "a", 1))
+        rows.append(_row(item_id, "m_gap", "b", 1))
+        rows.append(_row(item_id, "m_gap", "c", 1 if idx < 4 else 0))
+
+    results_path = tmp_path / "results.jsonl"
+    with open(results_path, "w", encoding="utf-8") as fh:
+        for row in rows:
+            fh.write(json.dumps(row) + "\n")
+
+    out_dir = tmp_path / "scoring"
+    exit_code = main([str(results_path), "--out-dir", str(out_dir)])
+    assert exit_code == 0
+
+    accuracy_rows = _read_csv(out_dir / "accuracy.csv")
+    accuracy = {(r["model"], r["level"]): float(r["accuracy"]) for r in accuracy_rows}
+    assert accuracy[("m_gap", "a")] == 1.0
+    assert accuracy[("m_gap", "b")] == 1.0
+    assert accuracy[("m_gap", "c")] == 0.4
+
+    gap_rows = _read_csv(out_dir / "literacy_gap.csv")
+    assert len(gap_rows) == 1
+    gap = gap_rows[0]
+    assert float(gap["clinical_accuracy"]) == 1.0
+    assert float(gap["low_literacy_accuracy"]) == 0.4
+    assert float(gap["literacy_gap"]) == pytest.approx(0.6)
+    assert int(gap["right_to_wrong_n"]) == 6
+    assert int(gap["clinical_correct_n"]) == 10
+    assert float(gap["right_to_wrong_flip_rate"]) == pytest.approx(0.6)
+
+    mcnemar_rows = _read_csv(out_dir / "mcnemar.csv")
+    assert len(mcnemar_rows) == 1
+    mcnemar = mcnemar_rows[0]
+    assert int(mcnemar["clinical_only"]) == 6
+    assert int(mcnemar["low_literacy_only"]) == 0
+    assert int(mcnemar["both_correct"]) == 4
+    assert int(mcnemar["neither_correct"]) == 0
+    assert float(mcnemar["mcnemar_exact_p"]) == pytest.approx(0.03125)
+
+
+def _read_csv(path):
+    with open(path, newline="", encoding="utf-8") as fh:
+        return list(csv.DictReader(fh))

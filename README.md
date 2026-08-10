@@ -100,6 +100,21 @@ Run `pytest tests/` before trusting any change to `harness.py` or `answer_parser
 API keys and zero GPU; drop `--mock` once real credentials and a running vLLM
 server are in place.
 
+## Scoring
+
+```bash
+python src/score_results.py data/results.jsonl --out-dir data/scoring
+```
+
+This writes:
+
+- `data/scoring/accuracy.csv`: accuracy per model per level
+- `data/scoring/literacy_gap.csv`: `acc(a) - acc(c)` plus right-to-wrong flip rate
+- `data/scoring/mcnemar.csv`: paired McNemar contingency counts and exact p-values
+
+By default, scoring uses `prompt_condition=plain`, `clinical_level=a`, and
+`low_literacy_level=c`. Override those only if the locked config names change.
+
 ## Reproducibility
 
 Nothing in `config.yaml` or `prompts/` should change once a run has started. If something

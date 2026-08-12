@@ -6,14 +6,27 @@ One function is the whole public surface:
     run_model(model_id, item, prompt_template, tracker=..., mock=...)
 
 Everything else in this file exists to make that one call correct: reading model
-config, routing to the right OpenAI-compatible endpoint (Azure / NVIDIA Build / local
-vLLM all speak the same API, so there is exactly one client code path), retrying only
-on transient failures, and logging every call through CostTracker.
+config, routing to the right backend, retrying only on transient failures, and
+logging every call through CostTracker.
+
+Four providers:
+    azure_openai        -- Azure OpenAI, HTTP
+    nvidia_build         -- NVIDIA Build, HTTP
+    local_hf              -- a local OpenAI-compatible server (e.g. vLLM) at
+                             localhost:8000. Requires that server already running.
+    local_transformers    -- loads the model directly in-process via `transformers`
+                             .generate(), no server, no vLLM. Slower per-call than
+                             vLLM at real pipeline scale, but has a far shallower
+                             dependency tree -- no exact torch/numpy/scipy pins to
+                             fight. Used for MedGemma on Kaggle after vLLM's
+                             dependency chain proved unworkable in that environment
+                             (see CHANGELOG.md). Model is loaded once and cached;
+                             first call per process is slow (real model load).
 
 Provider credentials come from environment variables (Kaggle Secrets sets these):
     AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT      (provider: azure_openai)
     NVIDIA_API_KEY                                   (provider: nvidia_build)
-    (none needed for provider: local_hf -- vLLM's local server takes any key)
+    (none needed for local_hf or local_transformers)
 
 If a model's provider key is missing, that model is skipped with a printed warning,
 never silently scored as 0%. See `available_models()`.
@@ -30,6 +43,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import yaml
@@ -139,6 +153,21 @@ def _resolve_model(cfg: dict, model_id: str) -> ResolvedModel:
     )
 
 
+def _local_transformers_available() -> bool:
+    """
+    Analogous to _local_server_reachable() for local_hf: a clean, one-time
+    check so a missing torch/transformers install fails ONCE with a clear skip
+    message in available_models(), instead of crashing deep inside generation
+    the first time run_model() actually tries to use it.
+    """
+    try:
+        import torch  # noqa: F401
+        import transformers  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 def available_models(cfg: dict, mock: bool = False) -> tuple[list[str], list[str]]:
     """
     Split models.evaluated into (ready, skipped) by id. A model is skipped if its
@@ -167,6 +196,12 @@ def available_models(cfg: dict, mock: bool = False) -> tuple[list[str], list[str
                 skipped.append(
                     f"{model_id}: local vLLM server not reachable at "
                     f"http://localhost:8000 -- is it started? (see KAGGLE_SETUP.md cell 3)"
+                )
+                continue
+            if provider == "local_transformers" and not _local_transformers_available():
+                skipped.append(
+                    f"{model_id}: torch/transformers not importable in this "
+                    f"environment -- install them before running for real"
                 )
                 continue
         ready.append(model_id)
@@ -279,7 +314,15 @@ def _call_with_retry(provider: str, **kwargs) -> Any:
     Retry ONLY on transient failures (rate limits, 5xx, timeouts, connection errors).
     A 4xx that isn't 408/409/425/429 will not fix itself on retry -- retrying it just
     burns quota, so those raise immediately.
+
+    local_transformers bypasses all of this and goes straight to in-process
+    generation -- there's no network call to retry, and a failure there (OOM, bad
+    input) is far more likely a real bug than a transient blip; retrying a
+    deterministic call would just fail identically anyway.
     """
+    if provider == "local_transformers":
+        return _call_local_transformers(**kwargs)
+
     from openai import APIConnectionError, APIStatusError, APITimeoutError
 
     client = _client_for(provider)
@@ -303,6 +346,86 @@ def _call_with_retry(provider: str, **kwargs) -> Any:
     raise TransientAPIError(
         f"Exhausted {MAX_RETRIES} retries against provider={provider!r}: {last_exc}"
     ) from last_exc
+
+
+# --------------------------------------------------------------------------- #
+# Direct in-process generation via transformers -- no server, no vLLM.
+# --------------------------------------------------------------------------- #
+
+_local_model_cache: dict[str, tuple[Any, Any]] = {}  # model_name -> (tokenizer, model)
+
+
+def _get_local_model(model_name: str) -> tuple[Any, Any]:
+    """
+    Lazy-load and cache a HF tokenizer+model for direct in-process generation.
+    Loaded once per process -- first call is genuinely slow (real model download
+    and load onto GPU), every call after reuses the cached model. Deliberately no
+    eviction: this project only ever runs one local model (MedGemma) per session.
+    """
+    if model_name not in _local_model_cache:
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name, torch_dtype=torch.float16, device_map="auto",
+        )
+        _local_model_cache[model_name] = (tokenizer, model)
+    return _local_model_cache[model_name]
+
+
+def _call_local_transformers(
+    *, model: str, messages: list[dict], temperature: float, max_tokens: int,
+    seed: int | None = None, **_ignored,
+) -> SimpleNamespace:
+    """
+    Mimics just enough of an OpenAI ChatCompletion response shape
+    (choices[0].message.content, usage.prompt_tokens/completion_tokens) that
+    run_model() needs no separate code path for this provider -- everything
+    downstream (parsing, logging, scoring) is identical regardless of which
+    provider actually produced the text.
+    """
+    import torch
+
+    tokenizer, hf_model = _get_local_model(model)
+    if seed is not None:
+        torch.manual_seed(seed)  # only affects sampling; irrelevant at temperature
+                                   # 0 / greedy decoding, which is every case in
+                                   # this project today -- harmless to set regardless.
+
+    prompt_text = messages[0]["content"]
+    try:
+        input_ids = tokenizer.apply_chat_template(
+            [{"role": "user", "content": prompt_text}],
+            add_generation_prompt=True, return_tensors="pt",
+        ).to(hf_model.device)
+    except Exception:
+        # Not every tokenizer ships a chat template -- fall back to plain
+        # encoding rather than crash outright.
+        input_ids = tokenizer(prompt_text, return_tensors="pt").input_ids.to(hf_model.device)
+
+    input_len = input_ids.shape[1]
+    generate_kwargs = dict(
+        max_new_tokens=max_tokens,
+        do_sample=(temperature > 0),
+        pad_token_id=tokenizer.eos_token_id,
+    )
+    if temperature > 0:
+        generate_kwargs["temperature"] = temperature  # transformers warns if this
+                                                          # is set alongside
+                                                          # do_sample=False, so omit
+                                                          # it entirely at temp 0.
+
+    with torch.no_grad():
+        output_ids = hf_model.generate(input_ids, **generate_kwargs)
+
+    completion_ids = output_ids[0][input_len:]
+    content = tokenizer.decode(completion_ids, skip_special_tokens=True)
+
+    return SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
+        usage=SimpleNamespace(prompt_tokens=input_len, completion_tokens=int(completion_ids.shape[0])),
+    )
 
 
 # --------------------------------------------------------------------------- #

@@ -85,7 +85,16 @@ models:
       max_tokens: 16
       seed: 20260807
     - id: medgemma
-      provider: local_hf   # self-hosted, Kaggle 2xT4 via vLLM
+      provider: local_transformers  # switched from local_hf (vLLM) 2026-08-09:
+                                     # vllm's exact-pinned torch/numpy/scipy
+                                     # dependency chain proved unworkable in the
+                                     # actual Kaggle container (see CHANGELOG.md).
+                                     # Direct transformers.generate() has a far
+                                     # shallower dependency tree. Slower per-call
+                                     # than vLLM at real pipeline scale (~15k
+                                     # calls) -- revisit for the full run if
+                                     # throughput becomes a real bottleneck, but
+                                     # unblocks the 50-item sanity check today.
       name: google/medgemma-4b-it
       version: null        # pin the HF commit SHA, not the branch
       temperature: 0

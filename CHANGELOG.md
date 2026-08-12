@@ -24,6 +24,17 @@ Initial frozen configuration. Nothing generated yet, so no regeneration required
 - MedReadMe jargon scorer added to the realism gate alongside Flesch-Kincaid, so
   manipulation strength is directly comparable to Yun et al. (2026), whose technical->plain
   jargon median moved 4.52 -> 3.83. Our gate requires a larger shift.
+- 2026-08-09: models.evaluated[medgemma].provider changed from local_hf (vLLM server)
+  to local_transformers (direct transformers.generate(), in-process, no server).
+  vLLM's exact-pinned dependency chain (numpy<2.0.0, torch==2.5.1, transformers>=4.48.2,
+  and dozens more) proved unworkable against Kaggle's actual base-image environment --
+  repeated install attempts left the container's own numpy installation corrupted
+  (pip's bookkeeping and the actually-loaded module reporting different versions,
+  core submodules missing). local_transformers sidesteps this entirely: far shallower
+  dependency tree, no exact pins to fight. Slower per-call than vLLM at real pipeline
+  scale (~15k calls) -- revisit if throughput becomes a bottleneck once the full run
+  starts, but unblocks the sanity check today. No prior artifacts affected -- nothing
+  had been generated against medgemma yet. See KAGGLE_SETUP.md for the full story.
 
 **Open — blocked on mentor lock**
 - `dataset.n_items`

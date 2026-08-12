@@ -66,7 +66,8 @@ def _restore_harness_internals():
     Restore the real ones after every test so patches never leak between tests."""
     originals = {
         name: getattr(harness, name)
-        for name in ("_call_with_retry", "_missing_credential", "_local_server_reachable")
+        for name in ("_call_with_retry", "_missing_credential", "_local_server_reachable",
+                     "_get_local_model")
     }
     yield
     for name, fn in originals.items():
@@ -314,3 +315,114 @@ def test_catchable_run_errors_includes_openai_errors():
     assert TransientAPIError in errors
     import openai
     assert any(issubclass(openai.OpenAIError, e) or e is openai.OpenAIError for e in errors)
+
+
+# --------------------------------------------------------------------------- #
+# local_transformers provider -- direct in-process generation, no server
+# --------------------------------------------------------------------------- #
+
+
+class _FakeTensor:
+    """Minimal stand-in for a torch.Tensor -- just enough surface area
+    (shape, indexing, .to()) for _call_local_transformers' logic to run against,
+    without needing the real multi-GB torch package in the test environment."""
+
+    def __init__(self, data):
+        self.data = data
+
+    @property
+    def shape(self):
+        return (len(self.data), len(self.data[0]) if self.data and isinstance(self.data[0], list) else 1)
+
+    def to(self, device):
+        return self
+
+    def __getitem__(self, idx):
+        if isinstance(idx, int):
+            row = self.data[idx]
+            return _FakeTensor(row) if isinstance(row, list) else row
+        return _FakeTensor(self.data[idx])
+
+    def __iter__(self):
+        return iter(self.data)
+
+
+@pytest.fixture
+def fake_torch(monkeypatch):
+    import types
+
+    mod = types.ModuleType("torch")
+    mod.tensor = lambda data: _FakeTensor(data)
+    mod.cat = lambda tensors, dim: _FakeTensor([tensors[0].data[0] + tensors[1].data[0]])
+
+    class NoGrad:
+        def __enter__(self):
+            return None
+
+        def __exit__(self, *a):
+            return False
+
+    mod.no_grad = NoGrad
+    mod.manual_seed = lambda s: None
+    mod.float16 = "float16"
+    monkeypatch.setitem(sys.modules, "torch", mod)
+    return mod
+
+
+def test_local_transformers_provider_full_path(isolated_config, fake_torch):
+    """
+    End-to-end through run_model() for the medgemma/local_transformers provider:
+    provider routing bypasses the OpenAI client entirely, the response gets
+    correctly shimmed into the same shape every other provider produces, and
+    parsing/scoring/schema all work identically regardless of provider.
+    """
+    class FakeTokenizer:
+        eos_token_id = 0
+
+        def apply_chat_template(self, msgs, add_generation_prompt=True, return_tensors="pt"):
+            return fake_torch.tensor([[1, 2, 3, 4, 5]])
+
+        def decode(self, ids, skip_special_tokens=True):
+            return "A"
+
+    class FakeModel:
+        device = "cpu"
+
+        def generate(self, input_ids, **kwargs):
+            return fake_torch.cat([input_ids, fake_torch.tensor([[99]])], dim=1)
+
+    harness._get_local_model = lambda name: (FakeTokenizer(), FakeModel())
+
+    cfg_path, _ = isolated_config
+    item = {"item_id": "test1", "stem": "A patient presents with fever.", "level": "a",
+            "options": {"A": "flu", "B": "cold", "C": "covid", "D": "strep"}, "gold": "A"}
+
+    record = run_model("medgemma", item, "prompts/eval_plain_v1.txt",
+                        config_path=cfg_path, prompt_condition="plain", mock=False)
+    assert record["predicted"] == "A"
+    assert record["correct"] is True
+    assert record["model"] == "google/medgemma-4b-it"
+
+
+def test_local_transformers_no_credential_needed(isolated_config, monkeypatch):
+    # local_transformers needs no API key at all -- confirms it doesn't show up
+    # in available_models()'s skip list the way azure_openai/nvidia_build do
+    # when their env vars are missing. Package availability is a separate concern
+    # (see test_local_transformers_unavailable_when_packages_missing below), so
+    # it's patched to True here to isolate what this test actually checks.
+    monkeypatch.setattr(harness, "_local_transformers_available", lambda: True)
+    _, cfg = isolated_config
+    ready, skipped = available_models(cfg, mock=False)
+    assert "medgemma" in ready
+    assert not any("medgemma" in s for s in skipped)
+
+
+def test_local_transformers_unavailable_when_packages_missing(isolated_config, monkeypatch):
+    # The other side of the same coin: if torch/transformers genuinely aren't
+    # importable, medgemma must be cleanly skipped with a clear message -- not
+    # crash deep inside generation the first time run_model() tries to use it.
+    monkeypatch.setattr(harness, "_local_transformers_available", lambda: False)
+    _, cfg = isolated_config
+    ready, skipped = available_models(cfg, mock=False)
+    assert "medgemma" not in ready
+    assert any("medgemma" in s and "torch/transformers" in s for s in skipped)

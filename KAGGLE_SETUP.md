@@ -1,9 +1,21 @@
 # Running on Kaggle (2x T4)
 
-Everything -- MedGemma inference and the API-based models -- runs from one notebook.
-MedGemma is served locally via vLLM; Llama-3.3 (NVIDIA Build) and the closed GPT model
-(Azure OpenAI) are called over the network from the same notebook. All three speak the
-OpenAI-compatible chat API, so `src/harness.py` has one client code path for all of them.
+MedGemma runs locally via direct `transformers` generation -- no vLLM, no separate
+server process. Llama-3.3 (NVIDIA Build) and the closed GPT model (Azure OpenAI) are
+called over the network. `src/harness.py` handles all of this behind one interface
+(`run_model`), so nothing above it needs to know which provider actually served a
+given call.
+
+**Why not vLLM:** it was the original plan, and it didn't work out. vLLM's
+exact-pinned dependency chain (`numpy<2.0.0`, `torch==2.5.1`, `transformers>=4.48.2`,
+dozens of other exact pins) collided repeatedly with what Kaggle's base image already
+has installed -- multiple attempts at reconciling it left the container's `numpy`
+installation itself corrupted (`pip show` reporting one version while the actually-
+loaded module reported another and was missing core submodules). Direct
+`transformers.generate()` has a far shallower dependency tree and sidesteps that
+entire class of problem. It's slower per call than vLLM would be at real pipeline
+scale (~15k calls for the full run) -- worth revisiting then if throughput becomes a
+real bottleneck -- but for a 50-item sanity check the difference is minutes, not hours.
 
 Right now (per config.yaml) there are no API keys set up yet, and the closed GPT model
 hasn't been chosen. That's fine -- everything below still works: `available_models()`
@@ -14,17 +26,34 @@ scores a missing model as 0%.
 
 **Cell 1 -- clone and install**
 ```bash
+%cd /kaggle/working
+!rm -rf literacymedqa
 !git clone https://github.com/RithikSatarla/literacymedqa.git
-%cd literacymedqa
-!unzip -oq literacymedqa.zip -d /tmp/unpacked && cp -r /tmp/unpacked/literacymedqa/* .
-!pip install -q -r requirements.txt
-!pip install -q vllm   # separate: GPU-specific build, not in requirements.txt
-```
-(The unzip step is a workaround for the repo's current state -- the intended
-`prompts/`/`src/`/`data/`/`logs/` layout is inside `literacymedqa.zip`, not yet
-committed as real folders on `main`. Once that's fixed upstream, drop this step.)
+%cd /kaggle/working/literacymedqa
+# Absolute path + delete-then-clone, not a plain `git clone` + `%cd literacymedqa`.
+# A plain relative clone re-run from an already-nested working directory (left over
+# from a prior attempt in the same session) silently clones INSIDE itself. This
+# version is safe to re-run from any starting state.
 
-**Cell 2 -- secrets (once you have them)**
+!pip install -q -r requirements.txt
+```
+That's the whole install. No version pins to fight -- `transformers` and `torch` are
+already in `requirements.txt` (`>=4.44.0` and `>=2.0.0`), and Kaggle's base image
+already ships working versions of both; there's no exact-pin dependency chain like
+vLLM's to reconcile against what's already there.
+
+Verify with a real import, not just `pip show`:
+```python
+import transformers
+import torch
+print("OK:", transformers.__version__, torch.__version__)
+print("CUDA available:", torch.cuda.is_available())
+```
+The last line matters -- if it prints `False`, the GPU accelerator isn't actually
+attached to this session (check Settings -> Accelerator -> GPU T4 x2) and generation
+will silently fall back to CPU, which will work but be extremely slow.
+
+**Cell 2 -- secrets (once you have them, not required for MedGemma)**
 ```python
 import os
 from kaggle_secrets import UserSecretsClient
@@ -42,44 +71,26 @@ try:
 except Exception:
     print("NVIDIA secret not set yet -- llama3 will be skipped.")
 ```
+Not required to run the sanity check -- MedGemma needs no key at all. Skip this cell
+entirely if you just want to confirm the harness works against MedGemma alone.
 
-**Cell 3 -- launch vLLM in the background**
-```python
-import subprocess, time, requests
-
-vllm_proc = subprocess.Popen([
-    "vllm", "serve", "google/medgemma-4b-it",
-    "--dtype", "float16",
-    "--tensor-parallel-size", "2",
-    "--port", "8000",
-])
-
-for _ in range(60):  # poll up to ~5 min; first load can be slow
-    try:
-        if requests.get("http://localhost:8000/v1/models", timeout=3).ok:
-            print("vLLM is up.")
-            break
-    except requests.exceptions.ConnectionError:
-        pass
-    time.sleep(5)
-else:
-    raise RuntimeError("vLLM did not come up in time -- check vllm_proc output.")
-```
-
-**Cell 4 -- run the sanity check**
+**Cell 3 -- run the sanity check**
 ```python
 !python src/sanity_check.py
 ```
-First time through, or any time you don't want to touch the GPU / burn API calls,
-run `!python src/sanity_check.py --mock` instead. Mock mode fakes the model responses
-with a deterministic pseudo-random letter, so it's expected to land around chance
-accuracy (~25% on 4 options) and print `CHECK`, not `PASS` -- that's correct, not a
-bug. Its job is only to prove the code path runs end to end (loads items, calls
-run_model, parses, logs cost, writes `data/sanity_check_results.jsonl`) with zero
-GPU and zero keys. Only a real (non-mock) run's accuracy numbers mean anything against
-the published-number targets.
+First time through, or any time you don't want to touch the GPU / burn API calls, run
+`!python src/sanity_check.py --mock` instead. Mock mode fakes the model responses with
+a deterministic pseudo-random letter, so it's expected to land around chance accuracy
+(~25% on 4 options) and print `CHECK`, not `PASS` -- that's correct, not a bug. Its
+job is only to prove the code path runs end to end with zero GPU and zero keys. Only a
+real (non-mock) run's accuracy numbers mean anything against the published-number
+targets.
 
-**Cell 5 -- the actual eval / intervention runs (Patrick's steps 8-9), once the sanity
+The first real (non-mock) call to MedGemma will be slow -- that's the actual model
+downloading and loading onto the GPU, a few minutes, one-time per session. Every call
+after that reuses the already-loaded model.
+
+**Cell 4 -- the actual eval / intervention runs (Patrick's steps 8-9), once the sanity
 check passes for real**
 ```python
 from src.harness import run_batch
@@ -91,11 +102,12 @@ This is resume-safe: if the Kaggle session dies mid-run, restarting this cell pi
 exactly where it left off (it skips every (item_id, model, level, prompt_condition)
 already in `data/results.jsonl`) rather than re-spending on completed work.
 
-## Before every real run
+## Before every real (full-pipeline) run
 
 ```bash
 python src/validate_config.py config.yaml
 ```
 As of this writing it still reports 2 blocking issues (rewriter version string,
 `gpt_closed` model not chosen) -- both need the mentor lock described in README.md
-before a full (non-sanity-check) run should happen.
+before a full (non-sanity-check) run should happen. Not required before the sanity
+check itself.

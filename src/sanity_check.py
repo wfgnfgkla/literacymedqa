@@ -32,6 +32,7 @@ import json
 import os
 import random
 import sys
+import time
 from pathlib import Path
 
 import yaml
@@ -147,7 +148,10 @@ def run_sanity_check(config_path: str = "config.yaml", mock: bool = False) -> in
             errored = 0  # items where run_model() itself raised (API failure, not
                           # a parse failure) -- see catchable_errors below
 
-            for item in items:
+            print(f"  [{model_id}] starting {len(items)} items...")
+            model_start = time.time()
+
+            for i, item in enumerate(items, start=1):
                 try:
                     record = run_model(
                         model_id,
@@ -180,6 +184,20 @@ def run_sanity_check(config_path: str = "config.yaml", mock: bool = False) -> in
                     scored += 1
                     if record["correct"]:
                         correct += 1
+
+                # Periodic, guaranteed-visible progress -- plain new lines, not a
+                # carriage-return progress bar. \r-based updates render
+                # inconsistently across notebook frontends (Jupyter, Kaggle,
+                # Colab, plain terminal), sometimes not at all -- and with zero
+                # visible output during processing, "working slowly" (rate
+                # limits, retries) and "actually hung" look identical from the
+                # outside. Printed AFTER each item completes (not before), so
+                # the count shown is always accurate, including the final line
+                # confirming all items actually finished.
+                if i % 10 == 0 or i == len(items):
+                    elapsed = time.time() - model_start
+                    print(f"  [{model_id}] {i}/{len(items)} done "
+                          f"({elapsed:.0f}s elapsed, {errored} failed so far)")
 
             attempted = len(items) - errored  # denominator for rates below: items
                                                # that actually got a response, not

@@ -419,10 +419,26 @@ def _call_local_transformers(
 
     prompt_text = messages[0]["content"]
     try:
-        input_ids = tokenizer.apply_chat_template(
+        chat_result = tokenizer.apply_chat_template(
             [{"role": "user", "content": prompt_text}],
             add_generation_prompt=True, return_tensors="pt",
-        ).to(hf_model.device)
+        )
+        # apply_chat_template does NOT reliably return a bare tensor. Some
+        # tokenizers (confirmed: MedGemma's, likely because it's built on a
+        # multimodal-capable processor family even for text-only use) return a
+        # BatchEncoding-style wrapper instead -- a dict-like object holding
+        # input_ids, attention_mask, etc. as separate fields, with no .shape of
+        # its own. Calling .to(device) on it works fine either way (BatchEncoding
+        # supports that), which is why this bug didn't surface until the next
+        # line -- .shape[1] on the wrapper, not the tensor inside it. Handle
+        # both shapes of return value explicitly rather than assume one.
+        chat_result = chat_result.to(hf_model.device)
+        if hasattr(chat_result, "input_ids"):
+            input_ids = chat_result.input_ids
+        elif isinstance(chat_result, dict) and "input_ids" in chat_result:
+            input_ids = chat_result["input_ids"]
+        else:
+            input_ids = chat_result
     except Exception:
         # Not every tokenizer ships a chat template -- fall back to plain
         # encoding rather than crash outright.

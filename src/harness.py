@@ -22,11 +22,19 @@ Four providers:
                              dependency chain proved unworkable in that environment
                              (see CHANGELOG.md). Model is loaded once and cached;
                              first call per process is slow (real model load).
+                             NOTE: MedGemma specifically is a gated model on
+                             Hugging Face -- needs HF_TOKEN set (see below), even
+                             though this provider needs no Azure/NVIDIA-style key.
 
 Provider credentials come from environment variables (Kaggle Secrets sets these):
     AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT      (provider: azure_openai)
     NVIDIA_API_KEY                                   (provider: nvidia_build)
-    (none needed for local_hf or local_transformers)
+    HF_TOKEN                                         (local_transformers, ONLY for
+                                                       gated HF models -- MedGemma
+                                                       needs this; a non-gated model
+                                                       wouldn't)
+    (no HF_TOKEN needed for local_hf -- vLLM's local server handles model access
+    itself, this only applies to loading a gated model directly in-process)
 
 If a model's provider key is missing, that model is skipped with a printed warning,
 never silently scored as 0%. See `available_models()`.
@@ -55,6 +63,17 @@ from cost_tracker import CostTracker  # noqa: E402
 RETRYABLE_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
 MAX_RETRIES = 5
 BASE_BACKOFF_SECONDS = 1.5
+CLIENT_TIMEOUT_SECONDS = 60.0  # openai SDK's own default is a 600s (10 min) READ
+                                 # timeout per attempt -- with MAX_RETRIES=5, a
+                                 # genuinely stuck connection (not erroring, just
+                                 # never responding) could silently block for up
+                                 # to 50 minutes before ever surfacing anything,
+                                 # which is indistinguishable from a true hang to
+                                 # anyone watching. A real single-letter MCQ
+                                 # response (max_tokens=16) has no legitimate
+                                 # reason to take anywhere near 60s under normal
+                                 # conditions; this makes a stuck connection fail
+                                 # fast and loud instead of blocking silently.
 
 
 class ModelNotConfigured(Exception):
@@ -264,22 +283,27 @@ def _make_client(provider: str):
     # max_retries=0 on every client: the SDK's own built-in retry would otherwise
     # silently stack with _call_with_retry()'s policy below, making backoff behavior
     # unpredictable. _call_with_retry is the single source of truth for retries.
+    # timeout=CLIENT_TIMEOUT_SECONDS on every client too, for the same reason --
+    # a single source of truth, not the SDK's much longer default.
     if provider == "azure_openai":
         return AzureOpenAI(
             api_key=os.environ["AZURE_OPENAI_API_KEY"],
             azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
             api_version="2024-10-21",
             max_retries=0,
+            timeout=CLIENT_TIMEOUT_SECONDS,
         )
     if provider == "nvidia_build":
         return OpenAI(
             api_key=os.environ["NVIDIA_API_KEY"],
             base_url="https://integrate.api.nvidia.com/v1",
             max_retries=0,
+            timeout=CLIENT_TIMEOUT_SECONDS,
         )
     if provider == "local_hf":
         # vLLM's OpenAI-compatible server. Any non-empty api_key is accepted.
-        return OpenAI(api_key="vllm-local", base_url="http://localhost:8000/v1", max_retries=0)
+        return OpenAI(api_key="vllm-local", base_url="http://localhost:8000/v1",
+                       max_retries=0, timeout=CLIENT_TIMEOUT_SECONDS)
     raise ValueError(f"Unknown provider: {provider!r}")
 
 

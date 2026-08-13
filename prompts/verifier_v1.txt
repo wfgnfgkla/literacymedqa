@@ -1,0 +1,77 @@
+You are auditing a paraphrase of a medical exam vignette. Your only job is to
+decide whether the CLINICAL CONTENT survived the paraphrase intact.
+
+The REWRITE is deliberately written the way a patient with low health literacy
+would write it. The following are INTENDED and are NEVER failures:
+  - lay words instead of medical terms ("chest feels tight" for "substernal
+    chest pressure", "poop" for "stool", "throwing up green stuff" for
+    "bilious vomiting")
+  - spelling mistakes, missing apostrophes, run-on sentences, missing commas
+  - first person or a family member speaking instead of a clinical narrator
+  - hedging and vagueness about how something felt
+  - dropping the name of a test while keeping what it showed
+  - reordering the information
+Do not flag any of these. Simplification is the point of the rewrite.
+
+A FAILURE is a change to the medicine. Flag it if the REWRITE, compared to the
+ORIGINAL:
+  - changes any number: a lab value, vital sign, dose, weight, age, count,
+    percentage, duration, or gestational week
+  - changes a unit (mg to mcg, g to mg, liters to milliliters, mEq/L to mg/dL)
+  - changes when something happened or how long it lasted
+  - changes a demographic attribute: age, sex, ancestry, occupation, pregnancy
+    status, where the person has travelled or lived
+  - flips a negation: a finding stated as absent in the ORIGINAL is present in
+    the REWRITE, or the reverse ("never turned blue" -> "turns blue often";
+    "no scrotal involvement" -> "rash is on the scrotum"; "tickling corrects
+    the deformity" -> "tickling does not correct it")
+  - drops a clinical finding, test result, exposure, or medication that the
+    ORIGINAL stated
+  - adds a clinical finding, test result, exposure, or medication that the
+    ORIGINAL did not state
+  - changes the question being asked
+
+Judge only ORIGINAL against REWRITE. Do not use outside medical knowledge to
+decide whether a finding is plausible, and do not try to answer the question
+yourself. A fact that changed is a failure even when the correct option would
+stay the same.
+
+You are also given the answer options and the letter that is correct for the
+ORIGINAL. Use them for one narrow purpose: to judge whether the REWRITE removes
+or alters evidence that the correct answer depends on, or introduces evidence
+pointing to a different option. Do not reason about which option you would pick.
+
+Every flag must be grounded. Quote the exact span from the ORIGINAL and the
+exact span from the REWRITE that differ. If you cannot quote both spans, you do
+not have a flag. When a difference is real but you cannot tell whether it is
+clinical or stylistic, answer "unsure" rather than guessing.
+
+Reply with a single JSON object and nothing else. No prose, no code fences.
+
+{
+  "clinical_fact_changed": "yes" | "no" | "unsure",
+  "answer_support_changed": "yes" | "no" | "unsure",
+  "change_type": "none" | "altered_number" | "unit_change" | "changed_timeline"
+                 | "changed_demographic" | "negation_flip" | "dropped_finding"
+                 | "added_finding" | "changed_question" | "other",
+  "evidence_original": "exact span from the ORIGINAL, or empty string",
+  "evidence_rewrite": "exact span from the REWRITE, or empty string",
+  "what_changed": "one sentence, or empty string if nothing changed",
+  "jargon_removed": "yes" | "partial" | "no",
+  "confidence": 0.0 to 1.0
+}
+
+"jargon_removed" is a separate question from fidelity: did the rewrite actually
+drop the clinical vocabulary, or is it still written like a doctor? Answer it
+independently of everything above.
+
+ORIGINAL:
+<<<ORIGINAL>>>
+
+ANSWER OPTIONS:
+<<<OPTIONS>>>
+
+CORRECT LETTER FOR THE ORIGINAL: <<<GOLD>>>
+
+REWRITE:
+<<<REWRITE>>>

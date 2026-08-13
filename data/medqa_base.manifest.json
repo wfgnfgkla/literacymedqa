@@ -1,0 +1,142 @@
+{
+  "tool_version": "sample_and_freeze/1.0.0",
+  "frozen_at_utc": "2026-08-11T07:49:35+00:00",
+  "source": {
+    "path": "data/medqa_source/phrases_no_exclude_test.jsonl",
+    "sha256": "c3b905ccfa66152dc25afbcb2c10e86c0bdb208824f0658fcdb2c040f60a2beb",
+    "dataset": "MedQA (Jin et al., 2021), US 4-option, test split",
+    "license": "MIT (see data/medqa_source/LICENSE.medqa)",
+    "population_size": 1253,
+    "duplicates_dropped": [],
+    "held_out_excluded": [
+      "LMQ-065c7f8b6a07",
+      "LMQ-080759124462",
+      "LMQ-26262d3a37c5",
+      "LMQ-2c43201966fc",
+      "LMQ-314875e5bc97",
+      "LMQ-4a247c2652a2",
+      "LMQ-4a27deb83dad",
+      "LMQ-4d19547c5bc8",
+      "LMQ-668e70c0450a",
+      "LMQ-80f90c090fc8",
+      "LMQ-8a7e68ee7ee9",
+      "LMQ-98268441ad91",
+      "LMQ-bcaad07a6cc6",
+      "LMQ-c5b79b97da28",
+      "LMQ-c91417ce578f",
+      "LMQ-d5058d762052",
+      "LMQ-db839633cb13",
+      "LMQ-e60047b5afaf",
+      "LMQ-f20f18a03336",
+      "LMQ-f264bc620af0"
+    ],
+    "held_out_source": "data/adversarial/held_out_ids.txt"
+  },
+  "sampling": {
+    "n": 500,
+    "seed": 20260811,
+    "method": "stratified, proportional allocation, largest-remainder rounding",
+    "strata_axes": [
+      "exam_step",
+      "has_labs",
+      "len_tercile"
+    ],
+    "len_tercile_cuts_words": {
+      "short<=": 96,
+      "mid<=": 136
+    }
+  },
+  "output": {
+    "path": "data/medqa_base.jsonl",
+    "sha256": "0f83f2dee50dc7dd4a735156033e5f51657f2227468a12feabc304d2c1412ce0",
+    "lines": 500
+  },
+  "strata": {
+    "step1|labs=0|long": {
+      "population": 31,
+      "sampled": 12,
+      "pop_share": 0.0247,
+      "sample_share": 0.024
+    },
+    "step1|labs=0|mid": {
+      "population": 111,
+      "sampled": 44,
+      "pop_share": 0.0886,
+      "sample_share": 0.088
+    },
+    "step1|labs=0|short": {
+      "population": 283,
+      "sampled": 113,
+      "pop_share": 0.2259,
+      "sample_share": 0.226
+    },
+    "step1|labs=1|long": {
+      "population": 89,
+      "sampled": 36,
+      "pop_share": 0.071,
+      "sample_share": 0.072
+    },
+    "step1|labs=1|mid": {
+      "population": 96,
+      "sampled": 38,
+      "pop_share": 0.0766,
+      "sample_share": 0.076
+    },
+    "step1|labs=1|short": {
+      "population": 60,
+      "sampled": 24,
+      "pop_share": 0.0479,
+      "sample_share": 0.048
+    },
+    "step2&3|labs=0|long": {
+      "population": 69,
+      "sampled": 28,
+      "pop_share": 0.0551,
+      "sample_share": 0.056
+    },
+    "step2&3|labs=0|mid": {
+      "population": 81,
+      "sampled": 32,
+      "pop_share": 0.0646,
+      "sample_share": 0.064
+    },
+    "step2&3|labs=0|short": {
+      "population": 50,
+      "sampled": 20,
+      "pop_share": 0.0399,
+      "sample_share": 0.04
+    },
+    "step2&3|labs=1|long": {
+      "population": 235,
+      "sampled": 94,
+      "pop_share": 0.1875,
+      "sample_share": 0.188
+    },
+    "step2&3|labs=1|mid": {
+      "population": 118,
+      "sampled": 47,
+      "pop_share": 0.0942,
+      "sample_share": 0.094
+    },
+    "step2&3|labs=1|short": {
+      "population": 30,
+      "sampled": 12,
+      "pop_share": 0.0239,
+      "sample_share": 0.024
+    }
+  },
+  "gold_letter_balance": {
+    "population": {
+      "B": 306,
+      "D": 259,
+      "C": 341,
+      "A": 347
+    },
+    "sample": {
+      "B": 124,
+      "D": 117,
+      "C": 133,
+      "A": 126
+    }
+  }
+}

@@ -317,6 +317,21 @@ def test_catchable_run_errors_includes_openai_errors():
     assert any(issubclass(openai.OpenAIError, e) or e is openai.OpenAIError for e in errors)
 
 
+def test_client_has_explicit_short_timeout_not_sdk_default(monkeypatch):
+    # The openai SDK's own default is a 600s (10 min) read timeout per attempt --
+    # with MAX_RETRIES=5, a genuinely stuck connection could silently block for
+    # up to 50 minutes before surfacing anything, indistinguishable from a real
+    # hang. Every client must override this explicitly, not rely on the default.
+    monkeypatch.setenv("NVIDIA_API_KEY", "fake-key-for-test")
+    harness._client_cache.clear()
+    client = harness._make_client("nvidia_build")
+    assert client.timeout == harness.CLIENT_TIMEOUT_SECONDS
+    assert client.timeout < 600, (
+        "client is using something close to the SDK's 10-minute default -- "
+        "a stuck connection would look like a hang for far too long"
+    )
+
+
 # --------------------------------------------------------------------------- #
 # local_transformers provider -- direct in-process generation, no server
 # --------------------------------------------------------------------------- #
@@ -402,6 +417,63 @@ def test_local_transformers_provider_full_path(isolated_config, fake_torch):
     assert record["predicted"] == "A"
     assert record["correct"] is True
     assert record["model"] == "google/medgemma-4b-it"
+
+
+def test_local_transformers_handles_batch_encoding_style_return(isolated_config, fake_torch):
+    """
+    Real bug, caught on an actual Kaggle run against real MedGemma: some
+    tokenizers' apply_chat_template() returns a BatchEncoding-style wrapper
+    (dict-like, holding input_ids/attention_mask as separate fields) instead of
+    a bare tensor -- confirmed for MedGemma's tokenizer specifically, likely
+    because it's built on a multimodal-capable processor family even for
+    text-only use. The wrapper supports .to(device) (so that call doesn't fail),
+    but has no .shape of its own, which is where this actually broke. This
+    reproduces that shape of return value and confirms the fix extracts the
+    real tensor from it correctly.
+    """
+    class FakeBatchEncoding:
+        """Mimics just enough of transformers.BatchEncoding to reproduce the
+        real bug: dict-like with a .input_ids field, .to() returns self, no
+        .shape of its own."""
+        def __init__(self, input_ids):
+            self.input_ids = input_ids
+
+        def to(self, device):
+            return self
+
+        def __contains__(self, key):
+            return key == "input_ids"
+
+        def __getitem__(self, key):
+            if key == "input_ids":
+                return self.input_ids
+            raise KeyError(key)
+
+    class FakeTokenizer:
+        eos_token_id = 0
+
+        def apply_chat_template(self, msgs, add_generation_prompt=True, return_tensors="pt"):
+            return FakeBatchEncoding(fake_torch.tensor([[1, 2, 3, 4, 5]]))
+
+        def decode(self, ids, skip_special_tokens=True):
+            return "B"
+
+    class FakeModel:
+        device = "cpu"
+
+        def generate(self, input_ids, **kwargs):
+            return fake_torch.cat([input_ids, fake_torch.tensor([[99]])], dim=1)
+
+    harness._get_local_model = lambda name: (FakeTokenizer(), FakeModel())
+
+    cfg_path, _ = isolated_config
+    item = {"item_id": "test2", "stem": "A patient presents with fever.", "level": "a",
+            "options": {"A": "flu", "B": "cold", "C": "covid", "D": "strep"}, "gold": "B"}
+
+    record = run_model("medgemma", item, "prompts/eval_plain_v1.txt",
+                        config_path=cfg_path, prompt_condition="plain", mock=False)
+    assert record["predicted"] == "B"
+    assert record["correct"] is True
 
 
 def test_local_transformers_no_credential_needed(isolated_config, monkeypatch):

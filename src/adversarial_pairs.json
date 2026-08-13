@@ -1,0 +1,197 @@
+{
+  "_readme": [
+    "Hand-authored by the project team, not model-generated. Each entry has one",
+    "faithful low-literacy rewrite of a MedQA test-split vignette and one",
+    "corruption expressed as a single find/replace on that rewrite.",
+    "",
+    "The corrupted twin therefore differs from the clean twin by exactly one edit.",
+    "That pairing is what makes the false-positive rate meaningful: if the verifier",
+    "flags the clean twin it is reacting to the paraphrase, not to the injected error.",
+    "",
+    "changes_gold_answer records whether the injected error would move the correct",
+    "letter. Corruptions that change a fact WITHOUT moving the answer are the hard",
+    "cases and are reported separately in the gate."
+  ],
+  "pairs": [
+    {
+      "source_index": 51,
+      "category": "altered_number",
+      "clean_rewrite": "Im 56 and a guy. I have high blood presure. Lately im real tired all the time and my mucles keep cramping up which is new for me. I havent changed any of my pills, im on hydrochlorothiazide, lisinopril and amlodipine. At the visit my temp was 98.0 F (36.7 C), blood presure 174/111, pulse 70, breathing 12 a min, oxygen 98% on room air. The doc listened to my heart and lungs and felt my belly and said everything seemed fine. They did blood work: sodium 138, chloride 100, potassium 3.3, bicarb 33, BUN 20, blood sugar 129. Whats most likely causing my high blood presure?",
+      "find": "potassium 3.3",
+      "replace": "potassium 4.1",
+      "changes_gold_answer": true,
+      "note": "removes the hypokalemia that points at aldosterone excess"
+    },
+    {
+      "source_index": 30,
+      "category": "altered_number",
+      "clean_rewrite": "Im a 42 year old woman. For the last 2 days ive had pain in the top right of my belly and im nauseus. Im 5 ft 4 (163 cm) and 200 lb (91 kg), they said my BMI is 34. My temp was 38.5 C (101.3 F). The doctor said my belly was swollen and tender on the upper right side but my bowel sounds were normal. Blood tests: white cells 14,000, total bilirubin 1.1, AST 32, ALT 40, alk phos 68. The ultrasound didnt show anything clear. Then they did a scan with dye and it lit up the bile ducts inside my liver, the hepatic ducts, the common bile duct and the start of the small bowel. Whats most likely causing my symptoms?",
+      "find": "white cells 14,000",
+      "replace": "white cells 4,000",
+      "changes_gold_answer": false,
+      "note": "fact changed, correct letter unchanged -- the hard case"
+    },
+    {
+      "source_index": 62,
+      "category": "altered_number",
+      "clean_rewrite": "Im 23 and pregnant with my first baby, 16 weeks along, just here for a normal checkup. Im more tired than usual but otherwise ok. I take folic acid, iron and vitamin D. They checked me: blood presure 110/70, heart rate 86, breathing 13, temp 36.6 C (97.9 F). The exam was normal. My blood count came back: red cells 3.9 million, hemoglobin 11.1, hematocrit 32%, reticulocytes 0.2%, MCV 90, platelets 210,000, white cells 8,100. Which test do they need to do to figure out whats behind my blood results?",
+      "find": "MCV 90",
+      "replace": "MCV 68",
+      "changes_gold_answer": true,
+      "note": "turns physiologic anemia of pregnancy into microcytic anemia"
+    },
+    {
+      "source_index": 23,
+      "category": "altered_number",
+      "clean_rewrite": "My dad is 62 and hes been in the hospital a week after a stroke. A week into being there he started running a fever and coughing up thick gunk. His heart rate was 88, breathing 20, temp 38.4 C (101.1 F), blood presure 110/85. The doctor heard crackles at the bottom of his right lung and the chest xray showed a new white patch on that same side. His blood count: hemoglobin 16, hematocrit 50%, white cells 8,900, neutrophils 72%, bands 4%, eosinophils 2%, basophils 0%, lymphocytes 17%, monocytes 5%, platelets 280,000. What germ is most likely causing this?",
+      "find": "temp 38.4 C (101.1 F)",
+      "replace": "temp 36.4 C (97.5 F)",
+      "changes_gold_answer": false,
+      "note": "deletes the fever; organism answer survives"
+    },
+    {
+      "source_index": 71,
+      "category": "unit_change",
+      "clean_rewrite": "Im 27 and I got in a car crash, head on, I was driving in the front and I wasnt wearing a seatbelt. They did a heart tracing and the only thing on it was a fast normal rhythm. My temp was 99.5 F (37.5 C), blood presure 107/58, pulse 120, breathing 17, oxygen 98% on room air. They gave me 2 liters of Ringer lactate and some morphine. The first tests showed the pressure in my lung vessels was high and my troponins were high too. My chest still hurts. The doctor saw brusing across my chest wall. Whats most likely going on?",
+      "find": "2 liters of Ringer lactate",
+      "replace": "2 milliliters of Ringer lactate",
+      "changes_gold_answer": false,
+      "note": "same value, impossible volume"
+    },
+    {
+      "source_index": 90,
+      "category": "unit_change",
+      "clean_rewrite": "Im a 32 year old woman. For about 3 weeks ive had runny poop on and off and ive lost 1.2 kg. I moved here from Uganda 6 weeks ago. When the doctor pressed on my belly it was sore all over but there was no guarding and no rebound. My liver felt firm and stuck out 3 cm under my right ribs, and they could feel my spleen just under the left ribs. My white count was 12,800 with 12% eosinophils. They looked at my stool and found oval eggs with a spine on the side. The liver biopsy showed granulomas and scarring around the portal areas. What was I probably exposed to that caused this?",
+      "find": "ive lost 1.2 kg",
+      "replace": "ive lost 1.2 g",
+      "changes_gold_answer": false,
+      "note": "unit change on a fact that is not answer-bearing at all"
+    },
+    {
+      "source_index": 48,
+      "category": "unit_change",
+      "clean_rewrite": "Im 29 and this is my first pregnancy. I came in at 35 weeks because I was in labor. Ive never had any serious health problems and the pregnancy went fine the whole way. My last ultrasound was at 22 weeks and it was normal. When I got here they couldnt find the babys heartbeat with the doppler. The ultrasound showed low fluid and no movement, no breathing and no heart activity. I delivered a boy who weighed 2296 g. He had no signs of life. There were no malformations that they could see and they said the placenta looked normal. What should the doctors do next?",
+      "find": "weighed 2296 g",
+      "replace": "weighed 2296 mg",
+      "changes_gold_answer": false,
+      "note": "birth weight unit"
+    },
+    {
+      "source_index": 243,
+      "category": "unit_change",
+      "clean_rewrite": "Im 61. They put me on rosuvastatin 40 mg 8 weeks ago and I came back for follow up. My legs have been hurting and I feel weak all over. When the doctor moved my arms and legs I could move them all the way but it hurt. My blood presure was 126/84 and my pulse 74. They decided to stop the statin and have me come back in 2 weeks to see if anything changed. After I stopped it the muscle stuff went away. What should they do next about my cholesterol?",
+      "find": "rosuvastatin 40 mg",
+      "replace": "rosuvastatin 40 mcg",
+      "changes_gold_answer": false,
+      "note": "dose unit; the answer is still to restart lower"
+    },
+    {
+      "source_index": 7,
+      "category": "changed_timeline",
+      "clean_rewrite": "Im 65 and I got rushed to the ER 30 minutes after my chest started hurting bad. I have high blood presure and asthma. I take atorvastatin, lisinopril and an albuterol inhaler. I looked pale and was sweating alot. My pulse was 114 and blood presure 130/88. The heart tracing showed the ST part dipping down in leads 2, 3 and aVF. My blood test showed troponin T going up. They treated me for a heart attack and did a balloon procedure to open the artery. Before I went home the heart ultrasound showed my pumping number was 58%. Besides aspirin, what other drug should they put me on?",
+      "find": "30 minutes after",
+      "replace": "30 hours after",
+      "changes_gold_answer": false,
+      "note": "presentation window"
+    },
+    {
+      "source_index": 32,
+      "category": "changed_timeline",
+      "clean_rewrite": "Im 22. For 2 days ive had fever, shaking chills and night sweats. Ive also been getting more and more tired for about a month. Five weeks ago I was in the hospital and got antibiotics through an IV for bacterial meningitis while I was visiting family in Guatemala. My temp was 39.4 C (102.9 F), pulse 130, blood presure 105/70. Im pale and I have little red dots and bruises on my skin. Blood work: hemoglobin 9.0, white cells 1,100 with 30% segmented neutrophils, platelets 20,000. The blood cultures grew a staph that is coagulase negative. Which antibiotic was I most likely given back then?",
+      "find": "Five weeks ago I was in the hospital",
+      "replace": "Five years ago I was in the hospital",
+      "changes_gold_answer": false,
+      "note": "breaks the causal window between exposure and marrow failure"
+    },
+    {
+      "source_index": 86,
+      "category": "changed_timeline",
+      "clean_rewrite": "Im 30 and Ive always been healthy. For 6 months sex has been painful. I also get bad cramping pelvic pain that starts the day before my period and keeps going for 7 days. Pain pills dont help. My periods come every 28 days like clockwork and last 5 days. My last period was 2 weeks ago. Im only with my husband. Im on the combo birth control pill. All my vitals were normal. On the exam the doctor said there was tenderness when they checked between the vagina and the rectum. The swabs from my cervix and urethra came back negative. The ultrasound through the vagina didnt show anything wrong. Whats the best thing to do next?",
+      "find": "keeps going for 7 days",
+      "replace": "keeps going for 2 hours",
+      "changes_gold_answer": false,
+      "note": "symptom duration"
+    },
+    {
+      "source_index": 65,
+      "category": "changed_timeline",
+      "clean_rewrite": "Im 56 and my back has been hurting for about a month now. Its a dull achy pain thats there all the time and its worse at night. The only thing I can think of is I did an amateur weight lifting competition 2 months ago. I had lung cancer before, the non small cell kind, they found it and treated it and it worked. I had a PET scan 1 year ago and it showed nothing had come back. The exam was normal except when they pressed on my lower back it was sore in one spot. What will the imaging most likely show?",
+      "find": "PET scan 1 year ago",
+      "replace": "PET scan 1 week ago",
+      "changes_gold_answer": false,
+      "note": "surveillance interval"
+    },
+    {
+      "source_index": 82,
+      "category": "changed_demographic",
+      "clean_rewrite": "Im 44 and African American and I came in for a regular checkup. Im worried about cancer because my uncle died from melanoma that spread, that was 1 year ago. Ive never been seriously sick and I dont take any medicine. Ive worked at a law firm for 20 years and my husband and I go to the Caribbean pretty often. The doctor looked at my skin and didnt see any weird moles or warts. Which kind of melanoma am I most at risk for?",
+      "find": "Im 44 and African American",
+      "replace": "Im 44 and white",
+      "changes_gold_answer": true,
+      "note": "ancestry is the answer-bearing fact in this item"
+    },
+    {
+      "source_index": 12,
+      "category": "changed_demographic",
+      "clean_rewrite": "Im a 20 year old guy. For the last month my walking has gotten more and more wobbly and Ive been losing hearing in both ears. Ive also had tingling come and go in both my cheeks during that time. Ive never had any serious illness and I dont take any meds. The hearing test showed nerve type hearing loss in both ears. The genetic testing found a change in a tumor suppresor gene on chromosome 22, the one that makes merlin. What am I at higher risk of getting?",
+      "find": "Im a 20 year old guy",
+      "replace": "Im a 62 year old guy",
+      "changes_gold_answer": false,
+      "note": "age changed, gene still decides the answer"
+    },
+    {
+      "source_index": 26,
+      "category": "changed_demographic",
+      "clean_rewrite": "My son is 3 and hes got this cough that sounds like a seal barking and a high squeaky noise when he breathes in that you can hear from across the room. Its gotten worse over the last few hours. His blood presure was 118/78, pulse 90, breathing 35 a minute, temp 38.3 C (101.1 F). He was sitting up leaning forward and working hard to breathe, you could see his skin sucking in above his collarbone and between his ribs. Listening to him there was that squeaky noise breathing in but no wheezing. He keeps doing that barking cough and his voice is hoarse. What is the chest xray likely to show?",
+      "find": "My son is 3 and",
+      "replace": "My son is 13 and",
+      "changes_gold_answer": false,
+      "note": "age changed out of the typical croup range"
+    },
+    {
+      "source_index": 66,
+      "category": "changed_demographic",
+      "clean_rewrite": "My little brother is 4 and hes been having really bad belly pain and throwing up green stuff for 6 hours. He hasnt pooped in 24 hours. He looks sick. His temp was 37.8 C (100 F) and his pulse 122. His belly is swollen and when they pressed on the lower part he tensed up and it hurt worse when they let go. His bowel sounds were quiet. The belly xray showed puffed up loops of bowel. Im 14 and I brought him in. The surgeon says he needs an emergency operation. Our parents are away visiting friends and we cant reach them. What should they do next?",
+      "find": "Im 14 and I brought him in",
+      "replace": "Im 24 and I brought him in",
+      "changes_gold_answer": false,
+      "note": "makes option A look defensible without making it correct"
+    },
+    {
+      "source_index": 21,
+      "category": "negation_flip",
+      "clean_rewrite": "My daughter is 3 months old. She coughs and seems like she cant breathe right when shes feeding. She also doesnt have as much energy as other babies and she just lays there most of the day. She was born by c section, Im her mom, this was my first pregnancy and I dont have any health problems. Her APGAR was normal when she was born. Shes never once turned blue. When the doctor listened they heard a high pitched whooshing sound that lasts the whole squeeze of the heart, best heard low on the left side of her chest bone. Whats the most likely thing behind this?",
+      "find": "Shes never once turned blue.",
+      "replace": "She turns blue pretty often.",
+      "changes_gold_answer": true,
+      "note": "acyanotic to cyanotic"
+    },
+    {
+      "source_index": 29,
+      "category": "negation_flip",
+      "clean_rewrite": "My baby boy is 3 weeks old and his left foot turns inward. He was born at 38 weeks by c section because he was breech. During the pregnancy they said I had low fluid. The doctor looked at the foot and said the inside edge curves in with a crease just under the ball of his big toe, and the outside edge bulges out. His heel sits straight. When they tickled the outside edge of his foot it straightened right out. Everything else about him was normal. The xray showed a wider angle between the first and second bones in his foot. What should we do next?",
+      "find": "it straightened right out",
+      "replace": "it did not straighten out at all",
+      "changes_gold_answer": true,
+      "note": "flexible to rigid deformity; reassurance no longer correct"
+    },
+    {
+      "source_index": 69,
+      "category": "negation_flip",
+      "clean_rewrite": "Im 65. I have high blood presure, Im overweight and I have cirrhosis from drinking. I actually feel fine right now and I still drink about 5 glasses of wine every night. I take atenolol and lisinopril. At the visit my temp was 98.1 F (36.7 C), blood presure 151/82, pulse 71, breathing 14. I have those little spider looking veins on my chest. The doctor checked and I dont have the hand flapping thing, Im not yellow, my belly isnt full of fluid and my legs arent swollen. A screening ultrasound found a new lump on my liver, and the CT after showed a 2 cm spot on the right side of my liver that lights up in the artery phase. It doesnt go dark on the vein phase or on the late pictures. What should they do next?",
+      "find": "I dont have the hand flapping thing, Im not yellow, my belly isnt full of fluid and my legs arent swollen",
+      "replace": "I have the hand flapping thing, Im yellow, my belly is full of fluid and my legs are swollen",
+      "changes_gold_answer": false,
+      "note": "compensated to decompensated cirrhosis"
+    },
+    {
+      "source_index": 55,
+      "category": "negation_flip",
+      "clean_rewrite": "Im 17 and I play football. Ive never had any health problems and theres nothing in my family either. My groin has been itching. It started during summer workouts before the season. I dont have a rash anywhere else on my body. My blood presure was 123/78, pulse 67, breathing 15, temp 38.1 C (98.7 F). The doctor said theres a red patch with clear edges and scaling around the border on my left thigh, my pubic area and the skin between my legs. The rash doesnt seem to be on my scrotum. How can they confirm what this is?",
+      "find": "The rash doesnt seem to be on my scrotum.",
+      "replace": "The rash is clearly on my scrotum too.",
+      "changes_gold_answer": false,
+      "note": "single negation flip that shifts the differential without moving the letter"
+    }
+  ]
+}

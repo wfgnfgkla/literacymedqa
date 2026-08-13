@@ -17,10 +17,11 @@ entire class of problem. It's slower per call than vLLM would be at real pipelin
 scale (~15k calls for the full run) -- worth revisiting then if throughput becomes a
 real bottleneck -- but for a 50-item sanity check the difference is minutes, not hours.
 
-Right now (per config.yaml) there are no API keys set up yet, and the closed GPT model
-hasn't been chosen. That's fine -- everything below still works: `available_models()`
-prints a clear skip for whatever isn't configured, and nothing crashes or silently
-scores a missing model as 0%.
+Right now (per config.yaml) the Azure/NVIDIA keys aren't set up yet, and the closed
+GPT model hasn't been chosen. Those models just get skipped cleanly -- `available_models()`
+prints a clear message and nothing crashes or silently scores a missing model as 0%.
+**HF_TOKEN is different: MedGemma will not load without it**, since it's a gated
+model on Hugging Face (see Cell 2).
 
 ## Cell order
 
@@ -53,7 +54,7 @@ The last line matters -- if it prints `False`, the GPU accelerator isn't actuall
 attached to this session (check Settings -> Accelerator -> GPU T4 x2) and generation
 will silently fall back to CPU, which will work but be extremely slow.
 
-**Cell 2 -- secrets (once you have them, not required for MedGemma)**
+**Cell 2 -- secrets**
 ```python
 import os
 from kaggle_secrets import UserSecretsClient
@@ -70,9 +71,24 @@ try:
     os.environ["NVIDIA_API_KEY"] = secrets.get_secret("NVIDIA_API_KEY")
 except Exception:
     print("NVIDIA secret not set yet -- llama3 will be skipped.")
+
+# MedGemma IS gated on Hugging Face (Health AI Developer Foundations terms of use --
+# accept once at huggingface.co/google/medgemma-4b-it, then generate a read token at
+# huggingface.co/settings/tokens). Without this, model loading fails with
+# GatedRepoError / 401, even though MedGemma itself needs no NVIDIA/Azure key.
+try:
+    hf_token = secrets.get_secret("HF_TOKEN")
+    os.environ["HF_TOKEN"] = hf_token
+    from huggingface_hub import login
+    login(token=hf_token)  # explicit call, not just the env var -- don't rely on
+                             # huggingface_hub's version-dependent auto-detection
+except Exception:
+    print("HF_TOKEN not set yet -- medgemma will fail with GatedRepoError on load.")
 ```
-Not required to run the sanity check -- MedGemma needs no key at all. Skip this cell
-entirely if you just want to confirm the harness works against MedGemma alone.
+Azure/NVIDIA are optional (those models just get skipped without them). **HF_TOKEN is
+not optional if you want MedGemma to actually load** -- unlike the other two, this
+isn't a "some models get skipped" situation, it's a hard requirement for the one model
+that needs no other credential at all.
 
 **Cell 3 -- run the sanity check**
 ```python

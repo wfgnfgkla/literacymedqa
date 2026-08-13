@@ -103,7 +103,8 @@ def load_mock_sample(n: int, seed: int) -> list[dict]:
     return items
 
 
-def run_sanity_check(config_path: str = "config.yaml", mock: bool = False) -> int:
+def run_sanity_check(config_path: str = "config.yaml", mock: bool = False,
+                      only_models: list[str] | None = None) -> int:
     cfg = yaml.safe_load(open(config_path, encoding="utf-8"))
     n = SANITY_CHECK_N
     seed = cfg["run"]["seed"]
@@ -124,6 +125,20 @@ def run_sanity_check(config_path: str = "config.yaml", mock: bool = False) -> in
     ready, skipped = available_models(cfg, mock=mock)
     for msg in skipped:
         print(f"  SKIP {msg}")
+
+    if only_models:
+        # An explicit --models filter is a user CHOICE, distinct from a model
+        # being unavailable -- worth its own message so it's clear this model
+        # was deliberately excluded, not silently missing for an unknown reason
+        # (e.g. a provider whose credentials check out fine but is behaving
+        # badly in practice -- available_models() can't detect that in advance,
+        # since it only checks credentials exist, not that the endpoint is
+        # actually healthy).
+        excluded = set(ready) - set(only_models)
+        for model_id in sorted(excluded):
+            print(f"  SKIP {model_id}: excluded via --models filter")
+        ready = [m for m in ready if m in only_models]
+
     if not ready:
         print("No models available to run. Nothing to check.", file=sys.stderr)
         return 2
@@ -273,5 +288,15 @@ if __name__ == "__main__":
     parser.add_argument("--mock", action="store_true",
                          help="No API keys, no GPU, no network -- fakes everything "
                               "including the dataset load, to test the full code path.")
+    parser.add_argument("--models", nargs="+", default=None,
+                         help="Restrict to these model ids only (e.g. --models "
+                              "medgemma). Useful when a model's credentials check "
+                              "out fine but the provider is actually misbehaving "
+                              "in practice -- available_models() can only detect "
+                              "missing credentials up front, not a provider that's "
+                              "timing out on every real call, so it can't skip "
+                              "that automatically. This lets you exclude it "
+                              "explicitly instead of waiting through 5 retries "
+                              "per item on something already known to be down.")
     args = parser.parse_args()
-    sys.exit(run_sanity_check(args.config, mock=args.mock))
+    sys.exit(run_sanity_check(args.config, mock=args.mock, only_models=args.models))

@@ -74,7 +74,8 @@ prompts/
   rewriter_v1.txt        generation prompt for levels (b) and (c)
   eval_plain_v1.txt      standard eval prompt
   eval_clarify_v1.txt    intervention arm
-  verifier_v1.txt        fidelity check (Dong, not written yet)
+  verifier_v1.txt        fidelity check prompt (Dong), pinned + hashed into
+                          every verifier result
 src/
   cost_tracker.py        logs every API call
   merge_costs.py         combines per-person logs into a team total
@@ -85,12 +86,35 @@ src/
                           when ambiguous or unparseable
   sanity_check.py        50-item harness smoke test against published MedQA
                           numbers, before trusting the harness for anything real
+  sample_and_freeze.py   Dong -- samples + freezes data/medqa_base.jsonl,
+                          enforced (refuses to silently overwrite)
+  verifier.py            Dong -- fidelity verifier: contract checks, deterministic
+                          surface diff, LLM backend
+  build_adversarial.py   Dong -- builds the 40-case adversarial gate set
+  run_adversarial_gate.py Dong -- runs the verifier against it, gates on
+                          sensitivity 1.00 / FPR <= 0.10
+  power.py               Dong -- McNemar sample-size calculator; N=500 traces to
+                          this, not to taste
+  verifier_selftest.py   Dong -- 22-assertion self-test, no API key needed
 tests/
   test_parser.py         answer_parser.py unit tests, no network needed
   test_harness.py        harness.py tests (resume-safety, crash-resilience,
                           credential handling), isolated from real data/logs
-data/                    base set, rewrites, results
+  test_score_results.py  score_results.py unit tests
+data/
+  medqa_base.jsonl        frozen 500-item base set (Dong)
+  medqa_base.manifest.json  source hash, seed, strata -- see FREEZE_LOG.md for
+                          every change after the initial freeze
+  adversarial/            the 40-case gate set + held-out ids (excluded from
+                          the released benchmark)
+  medqa_source/           vendored MedQA test split + license
+results/                 adversarial_gate_rules.{json,md} -- current gate: FAIL
+                          on the rules-only backend (expected; see docs)
 logs/                    api call logs
+docs/
+  results_schema.md       canonical results.csv interchange schema
+  dataset_and_verifier.md full writeup: freeze design, verifier architecture,
+                          adversarial gate methodology (Dong)
 CHANGELOG.md             config and prompt version history
 KAGGLE_SETUP.md          cell-by-cell notebook setup for the harness + sanity check
 ```
@@ -99,6 +123,22 @@ Run `pytest tests/` before trusting any change to `harness.py` or `answer_parser
 `python src/sanity_check.py --mock` exercises the full harness code path with zero
 API keys and zero GPU; drop `--mock` once real credentials and a running vLLM
 server are in place.
+
+## Dataset freeze & fidelity verifier
+
+```bash
+python src/sample_and_freeze.py verify        # confirm data/medqa_base.jsonl matches its manifest
+python src/verifier_selftest.py               # 22 assertions, no API key needed
+python src/run_adversarial_gate.py --backend rules       # no key
+ANTHROPIC_API_KEY=... python src/run_adversarial_gate.py --backend anthropic  # the real gate
+```
+
+N=500 comes from `src/power.py`'s McNemar power calculation, not from taste. The
+rules-only backend currently **fails** the adversarial gate (15/20 sensitivity,
+misses all 4 negation-flip corruptions) -- expected, since regex can't see a
+negation flip; the LLM backend is the real Week 1 exit criterion and hasn't been
+run yet (no API key in this environment). Full design writeup, including why the
+gate is built the way it is: [`docs/dataset_and_verifier.md`](docs/dataset_and_verifier.md).
 
 ## Scoring
 

@@ -4,6 +4,12 @@
 
 run:
   config_version: 1
+  # PROVISIONAL: rewriter version and the closed model name/version below were filled
+  # from public model identifiers so the pipeline could run while waiting on mentor
+  # confirmation. They are NOT confirmed against our Azure deployment. Set to
+  # 'confirmed' once Kiran signs off, and regenerate anything produced beforehand if
+  # a value turns out to be wrong.
+  lock_status: provisional
   seed: 20260807
   # Set to false once the pilot gates pass and full generation begins.
   pilot_mode: true
@@ -52,7 +58,7 @@ models:
     # Must NOT appear in `evaluated`. Generates levels (b) and (c).
     provider: azure_openai
     name: gpt-4o-mini
-    version: null          # <-- TODO: lock exact version string with Kiran
+    version: gpt-4o-mini-2024-07-18   # PROVISIONAL - confirm against Azure deployment
     temperature: 0
     top_p: 1
     max_tokens: 1200
@@ -72,8 +78,8 @@ models:
   evaluated:
     - id: gpt_closed
       provider: azure_openai
-      name: null           # <-- TODO: lock closed comparison model with Kiran
-      version: null
+      name: gpt-4o                     # PROVISIONAL - confirm with Kiran
+      version: gpt-4o-2024-11-20       # PROVISIONAL - confirm against Azure deployment
       temperature: 0
       max_tokens: 16
       seed: 20260807
@@ -144,12 +150,18 @@ parsing:
   # Unparseable responses are logged, never silently scored wrong.
 
 # Cost rates are USD per 1M tokens. VERIFY THESE AGAINST CURRENT PROVIDER PRICING
-# BEFORE TRUSTING ANY TOTAL — they change, and stale rates make the tracker lie.
+# BEFORE TRUSTING ANY TOTAL - they change, and stale rates make the tracker lie.
 cost_rates_usd_per_1m:
   gpt-4o-mini:
     input: null            # <-- TODO: fill from provider pricing page
     output: null
+  gpt-4o:
+    input: null            # <-- TODO: fill from provider pricing page
+    output: null
   meta/llama-3.3-70b-instruct:
+    input: 0.0             # free tier
+    output: 0.0
+  qwen/qwen2.5-72b-instruct:
     input: 0.0             # free tier
     output: 0.0
   google/medgemma-4b-it:

@@ -384,18 +384,54 @@ def fake_torch(monkeypatch):
     return mod
 
 
-def test_local_transformers_provider_full_path(isolated_config, fake_torch):
+class _FakeBatchEncoding:
     """
-    End-to-end through run_model() for the medgemma/local_transformers provider:
-    provider routing bypasses the OpenAI client entirely, the response gets
-    correctly shimmed into the same shape every other provider produces, and
-    parsing/scoring/schema all work identically regardless of provider.
+    Mimics enough of transformers.BatchEncoding to test the real calling
+    convention: dict-like with input_ids/attention_mask fields, .to(device)
+    returns self, AND unpackable via **inputs (needs .keys() + __getitem__,
+    not just __contains__ + __getitem__ -- ** unpacking specifically requires
+    .keys()). A prior test version only supported __contains__, which was
+    enough for the old "extract fields manually" code but not for the current
+    "pass the whole dict through via **inputs" design.
     """
-    class FakeTokenizer:
-        eos_token_id = 0
+    def __init__(self, **fields):
+        self._fields = fields
 
-        def apply_chat_template(self, msgs, add_generation_prompt=True, return_tensors="pt"):
-            return fake_torch.tensor([[1, 2, 3, 4, 5]])
+    def to(self, device):
+        return self
+
+    def keys(self):
+        return self._fields.keys()
+
+    def __getitem__(self, key):
+        return self._fields[key]
+
+    def __contains__(self, key):
+        return key in self._fields
+
+
+def test_local_transformers_sends_content_as_typed_blocks(isolated_config, fake_torch):
+    """
+    Real, verifiable gap found by comparing directly against Google's own
+    official "How to use" example for this exact model: their message content
+    is a list of typed blocks ({"type": "text", "text": ...}), not a bare
+    string. MedGemma's chat template is built to handle mixed text+image
+    conversations, so a plain string is a less-exercised code path for this
+    specific processor. This confirms the harness sends the documented format,
+    not an unverified guess at what the template expects.
+    """
+    captured_msgs = {}
+
+    class FakeProcessor:
+        eos_token_id = 1
+
+        def apply_chat_template(self, msgs, add_generation_prompt=True,
+                                 return_tensors="pt", return_dict=True):
+            captured_msgs["msgs"] = msgs
+            return _FakeBatchEncoding(
+                input_ids=fake_torch.tensor([[1, 2, 3]]),
+                attention_mask=fake_torch.tensor([[1, 1, 1]]),
+            )
 
         def decode(self, ids, skip_special_tokens=True):
             return "A"
@@ -403,10 +439,63 @@ def test_local_transformers_provider_full_path(isolated_config, fake_torch):
     class FakeModel:
         device = "cpu"
 
-        def generate(self, input_ids, **kwargs):
+        def generate(self, **kwargs):
+            return fake_torch.cat([kwargs["input_ids"], fake_torch.tensor([[99]])], dim=1)
+
+    harness._get_local_model = lambda name: (FakeProcessor(), FakeModel())
+
+    cfg_path, _ = isolated_config
+    item = {"item_id": "test0", "stem": "stem", "level": "a",
+            "options": {"A": "a", "B": "b", "C": "c", "D": "d"}, "gold": "A"}
+
+    run_model("medgemma", item, "prompts/eval_plain_v1.txt",
+              config_path=cfg_path, prompt_condition="plain", mock=False)
+
+    content = captured_msgs["msgs"][0]["content"]
+    assert isinstance(content, list), (
+        f"content sent as {type(content).__name__}, not a list of typed blocks "
+        f"-- doesn't match Google's own documented format for this model"
+    )
+    assert content[0]["type"] == "text"
+    assert content[0]["text"]  # the actual prompt text made it through
+
+
+def test_local_transformers_provider_full_path(isolated_config, fake_torch):
+    """
+    End-to-end through run_model() for the medgemma/local_transformers provider:
+    provider routing bypasses the OpenAI client entirely, the response gets
+    correctly shimmed into the same shape every other provider produces, and
+    parsing/scoring/schema all work identically regardless of provider.
+
+    Uses AutoModelForImageTextToText + AutoProcessor's actual calling
+    convention (return_dict=True, **inputs unpacked into generate()) -- not
+    AutoModelForCausalLM + AutoTokenizer's. MedGemma is a genuinely multimodal
+    checkpoint; loading it through the wrong model class produced all-<pad>
+    output on real Kaggle runs even after the attention_mask fix, which is why
+    this test exists at this level of specificity rather than just "it returns
+    some text".
+    """
+    class FakeProcessor:
+        eos_token_id = 1
+
+        def apply_chat_template(self, msgs, add_generation_prompt=True,
+                                 return_tensors="pt", return_dict=True):
+            return _FakeBatchEncoding(
+                input_ids=fake_torch.tensor([[1, 2, 3, 4, 5]]),
+                attention_mask=fake_torch.tensor([[1, 1, 1, 1, 1]]),
+            )
+
+        def decode(self, ids, skip_special_tokens=True):
+            return "A"
+
+    class FakeModel:
+        device = "cpu"
+
+        def generate(self, **kwargs):
+            input_ids = kwargs["input_ids"]
             return fake_torch.cat([input_ids, fake_torch.tensor([[99]])], dim=1)
 
-    harness._get_local_model = lambda name: (FakeTokenizer(), FakeModel())
+    harness._get_local_model = lambda name: (FakeProcessor(), FakeModel())
 
     cfg_path, _ = isolated_config
     item = {"item_id": "test1", "stem": "A patient presents with fever.", "level": "a",
@@ -419,60 +508,71 @@ def test_local_transformers_provider_full_path(isolated_config, fake_torch):
     assert record["model"] == "google/medgemma-4b-it"
 
 
-def test_local_transformers_handles_batch_encoding_style_return(isolated_config, fake_torch):
+def test_local_transformers_passes_full_inputs_dict_to_generate(isolated_config, fake_torch):
     """
-    Real bug, caught on an actual Kaggle run against real MedGemma: some
-    tokenizers' apply_chat_template() returns a BatchEncoding-style wrapper
-    (dict-like, holding input_ids/attention_mask as separate fields) instead of
-    a bare tensor -- confirmed for MedGemma's tokenizer specifically, likely
-    because it's built on a multimodal-capable processor family even for
-    text-only use. The wrapper supports .to(device) (so that call doesn't fail),
-    but has no .shape of its own, which is where this actually broke. This
-    reproduces that shape of return value and confirms the fix extracts the
-    real tensor from it correctly.
+    Real bug, caught across two actual Kaggle runs against real MedGemma:
+    (1) attention_mask was extracted from nowhere and never passed to
+    generate() -- symptom was raw_output == '' (empty string) on every item.
+    (2) Even after fixing that, output was still broken: real MedGemma runs
+    produced literal <pad> tokens (id 0) instead of real content, sixteen in a
+    row, on every single item. Root cause: MedGemma-4B is a genuinely
+    multimodal (text+vision) checkpoint (confirmed: weight loading includes
+    model.vision_tower.*, and Google's own documentation lists "Text, vision"
+    as its modalities) -- it was being loaded via AutoModelForCausalLM +
+    AutoTokenizer, the wrong classes for a multimodal checkpoint, instead of
+    AutoModelForImageTextToText + AutoProcessor.
+
+    The fix passes through EVERYTHING the processor produces via **inputs,
+    not just two manually-extracted fields -- this test confirms that
+    unpacking actually happens and includes both required fields, not just
+    that some text comes back.
     """
-    class FakeBatchEncoding:
-        """Mimics just enough of transformers.BatchEncoding to reproduce the
-        real bug: dict-like with a .input_ids field, .to() returns self, no
-        .shape of its own."""
-        def __init__(self, input_ids):
-            self.input_ids = input_ids
+    captured_kwargs = {}
 
-        def to(self, device):
-            return self
+    class FakeProcessor:
+        eos_token_id = 1
 
-        def __contains__(self, key):
-            return key == "input_ids"
-
-        def __getitem__(self, key):
-            if key == "input_ids":
-                return self.input_ids
-            raise KeyError(key)
-
-    class FakeTokenizer:
-        eos_token_id = 0
-
-        def apply_chat_template(self, msgs, add_generation_prompt=True, return_tensors="pt"):
-            return FakeBatchEncoding(fake_torch.tensor([[1, 2, 3, 4, 5]]))
+        def apply_chat_template(self, msgs, add_generation_prompt=True,
+                                 return_tensors="pt", return_dict=True):
+            return _FakeBatchEncoding(
+                input_ids=fake_torch.tensor([[1, 2, 3, 4, 5]]),
+                attention_mask=fake_torch.tensor([[1, 1, 1, 1, 1]]),
+            )
 
         def decode(self, ids, skip_special_tokens=True):
-            return "B"
+            return "D"
 
     class FakeModel:
         device = "cpu"
 
-        def generate(self, input_ids, **kwargs):
+        def generate(self, **kwargs):
+            captured_kwargs.update(kwargs)
+            input_ids = kwargs["input_ids"]
             return fake_torch.cat([input_ids, fake_torch.tensor([[99]])], dim=1)
 
-    harness._get_local_model = lambda name: (FakeTokenizer(), FakeModel())
+    harness._get_local_model = lambda name: (FakeProcessor(), FakeModel())
 
     cfg_path, _ = isolated_config
-    item = {"item_id": "test2", "stem": "A patient presents with fever.", "level": "a",
-            "options": {"A": "flu", "B": "cold", "C": "covid", "D": "strep"}, "gold": "B"}
+    item = {"item_id": "test2", "stem": "stem", "level": "a",
+            "options": {"A": "a", "B": "b", "C": "c", "D": "d"}, "gold": "D"}
 
     record = run_model("medgemma", item, "prompts/eval_plain_v1.txt",
                         config_path=cfg_path, prompt_condition="plain", mock=False)
-    assert record["predicted"] == "B"
+
+    assert "input_ids" in captured_kwargs
+    assert "attention_mask" in captured_kwargs, (
+        "attention_mask was never passed to generate() -- this is the first of "
+        "two real bugs found via real Kaggle runs against MedGemma"
+    )
+    assert captured_kwargs["attention_mask"].data == [[1, 1, 1, 1, 1]]
+    # pad_token_id/eos_token_id must NOT be forced by us anymore -- a prior
+    # version hardcoded pad_token_id=tokenizer.eos_token_id, which is wrong for
+    # MedGemma (confirmed against a real loaded instance: pad_token_id=0,
+    # eos_token_id=1, genuinely different tokens, both already correct in the
+    # model's own generation_config).
+    assert "pad_token_id" not in captured_kwargs
+    assert "eos_token_id" not in captured_kwargs
+    assert record["predicted"] == "D"
     assert record["correct"] is True
 
 

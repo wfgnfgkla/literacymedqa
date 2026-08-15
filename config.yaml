@@ -4,12 +4,6 @@
 
 run:
   config_version: 1
-  # PROVISIONAL: rewriter version and the closed model name/version below were filled
-  # from public model identifiers so the pipeline could run while waiting on mentor
-  # confirmation. They are NOT confirmed against our Azure deployment. Set to
-  # 'confirmed' once Kiran signs off, and regenerate anything produced beforehand if
-  # a value turns out to be wrong.
-  lock_status: provisional
   seed: 20260807
   # Set to false once the pilot gates pass and full generation begins.
   pilot_mode: true
@@ -21,8 +15,8 @@ dataset:
   split: test
   # NOTE: the US test split is ~1,273 items. N cannot exceed it.
   # LOCK WITH MENTOR before full generation.
-  n_items: null            # <-- TODO: lock N with Kiran
-  stratify_by: null        # e.g. specialty, or null for simple random
+  n_items: null # <-- TODO: lock N with Kiran
+  stratify_by: null # e.g. specialty, or null for simple random
   base_file: data/medqa_base.jsonl
   # Dong owns this file. Once committed, no item added or removed without a logged reason.
 
@@ -58,7 +52,7 @@ models:
     # Must NOT appear in `evaluated`. Generates levels (b) and (c).
     provider: azure_openai
     name: gpt-4o-mini
-    version: gpt-4o-mini-2024-07-18   # PROVISIONAL - confirm against Azure deployment
+    version: null # <-- TODO: lock exact version string with Kiran
     temperature: 0
     top_p: 1
     max_tokens: 1200
@@ -70,7 +64,7 @@ models:
     # the paid budget entirely.
     provider: nvidia_build
     name: qwen/qwen2.5-72b-instruct
-    version: null          # <-- TODO: lock
+    version: null # <-- TODO: lock
     temperature: 0
     max_tokens: 400
     seed: 20260807
@@ -78,8 +72,8 @@ models:
   evaluated:
     - id: gpt_closed
       provider: azure_openai
-      name: gpt-4o                     # PROVISIONAL - confirm with Kiran
-      version: gpt-4o-2024-11-20       # PROVISIONAL - confirm against Azure deployment
+      name: null # <-- TODO: lock closed comparison model with Kiran
+      version: null
       temperature: 0
       max_tokens: 16
       seed: 20260807
@@ -91,22 +85,28 @@ models:
       max_tokens: 16
       seed: 20260807
     - id: medgemma
-      provider: local_transformers  # switched from local_hf (vLLM) 2026-08-09:
-                                     # vllm's exact-pinned torch/numpy/scipy
-                                     # dependency chain proved unworkable in the
-                                     # actual Kaggle container (see CHANGELOG.md).
-                                     # Direct transformers.generate() has a far
-                                     # shallower dependency tree. Slower per-call
-                                     # than vLLM at real pipeline scale (~15k
-                                     # calls) -- revisit for the full run if
-                                     # throughput becomes a real bottleneck, but
-                                     # unblocks the 50-item sanity check today.
+      provider:
+        local_transformers # switched from local_hf (vLLM) 2026-08-09:
+        # vllm's exact-pinned torch/numpy/scipy
+        # dependency chain proved unworkable in the
+        # actual Kaggle container (see CHANGELOG.md).
+        # Direct transformers.generate() has a far
+        # shallower dependency tree. Slower per-call
+        # than vLLM at real pipeline scale (~15k
+        # calls) -- revisit for the full run if
+        # throughput becomes a real bottleneck, but
+        # unblocks the 50-item sanity check today.
       name: google/medgemma-4b-it
-      version: null        # pin the HF commit SHA, not the branch
+      version: null # pin the HF commit SHA, not the branch
       temperature: 0
       max_tokens: 16
       seed: 20260807
-      dtype: float16
+      dtype:
+        bfloat16 # NOT actually read by harness.py (hardcoded in
+        # _get_local_model instead) -- kept here as accurate
+        # documentation, not live config. float16 caused
+        # NaN-poisoned output for this Gemma-3-based model;
+        # see CHANGELOG.md.
 
 # NOTE ON SEEDS: at temperature 0 sampling is already greedy, so seeds are belt-and-
 # braces rather than load-bearing. Not every provider honours a seed parameter, and
@@ -137,7 +137,7 @@ gates:
     # manipulation is stronger than their lexical-only simplification
     # (their technical median 4.52 -> plain 3.83).
     jargon_scorer: chaojiang06/medreadme_medical_sentence_readability_prediction_CWI
-    target_jargon_delta_min: 0.69   # must beat the Yun et al. shift
+    target_jargon_delta_min: 0.69 # must beat the Yun et al. shift
   fidelity:
     min_filter_human_kappa: 0.6
     manual_audit_n: 150
@@ -150,22 +150,16 @@ parsing:
   # Unparseable responses are logged, never silently scored wrong.
 
 # Cost rates are USD per 1M tokens. VERIFY THESE AGAINST CURRENT PROVIDER PRICING
-# BEFORE TRUSTING ANY TOTAL - they change, and stale rates make the tracker lie.
+# BEFORE TRUSTING ANY TOTAL — they change, and stale rates make the tracker lie.
 cost_rates_usd_per_1m:
   gpt-4o-mini:
-    input: null            # <-- TODO: fill from provider pricing page
-    output: null
-  gpt-4o:
-    input: null            # <-- TODO: fill from provider pricing page
+    input: null # <-- TODO: fill from provider pricing page
     output: null
   meta/llama-3.3-70b-instruct:
-    input: 0.0             # free tier
-    output: 0.0
-  qwen/qwen2.5-72b-instruct:
-    input: 0.0             # free tier
+    input: 0.0 # free tier
     output: 0.0
   google/medgemma-4b-it:
-    input: 0.0             # self-hosted
+    input: 0.0 # self-hosted
     output: 0.0
 
 logging:

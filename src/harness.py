@@ -403,7 +403,25 @@ def _get_local_model(model_name: str) -> tuple[Any, Any]:
 
         processor = AutoProcessor.from_pretrained(model_name)
         model = AutoModelForImageTextToText.from_pretrained(
-            model_name, torch_dtype=torch.float16, device_map="auto",
+            model_name, torch_dtype=torch.bfloat16, device_map="auto",
+            # bfloat16, NOT float16. This is a documented, well-understood Gemma 3
+            # architecture issue (MedGemma is built on Gemma 3), not a style
+            # choice: Gemma 3's embedding output is scaled by sqrt(hidden_size),
+            # producing activations large enough to overflow float16's range
+            # (max ~65504) -- the result is NaN-poisoned logits and empty/
+            # degenerate output. This is exactly what real Kaggle runs kept
+            # producing: literal <pad> tokens (id 0) repeated for the entire
+            # generation, on every single item, regardless of the model-class
+            # and attention_mask fixes. See the open HuggingFace issue
+            # "Gemma 3 is broken with fp16" (transformers#36822) for the
+            # upstream confirmation, using this exact apply_chat_template
+            # pattern. bfloat16 has the same exponent range as float32 and does
+            # not hit this overflow. float16 was originally chosen here for
+            # assumed T4 (Turing) hardware compatibility, but bfloat16 has been
+            # directly confirmed working on a T4 for a same-size Gemma 3 4B
+            # model elsewhere -- Turing supports bfloat16 as a compute dtype,
+            # just without the dedicated tensor-core acceleration Ampere+ GPUs
+            # have for it, so it may run somewhat slower but should not fail.
         )
         _local_model_cache[model_name] = (processor, model)
     return _local_model_cache[model_name]

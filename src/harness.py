@@ -418,6 +418,7 @@ def _call_local_transformers(
                                    # this project today -- harmless to set regardless.
 
     prompt_text = messages[0]["content"]
+    attention_mask = None
     try:
         chat_result = tokenizer.apply_chat_template(
             [{"role": "user", "content": prompt_text}],
@@ -432,17 +433,34 @@ def _call_local_transformers(
         # supports that), which is why this bug didn't surface until the next
         # line -- .shape[1] on the wrapper, not the tensor inside it. Handle
         # both shapes of return value explicitly rather than assume one.
+        #
+        # The wrapper also carries a correctly-computed attention_mask alongside
+        # input_ids -- a prior fix here extracted input_ids and silently dropped
+        # it. Without an explicit attention_mask, generate() has to infer one
+        # from input_ids, which it cannot do reliably when pad_token_id ==
+        # eos_token_id (transformers warns about exactly this at call time) --
+        # confirmed as the actual cause: real MedGemma runs produced raw_output
+        # == '' on every single item, consistent with the model reading a
+        # mis-inferred mask and immediately emitting only an EOS token, which
+        # skip_special_tokens=True then strips down to an empty string.
         chat_result = chat_result.to(hf_model.device)
         if hasattr(chat_result, "input_ids"):
             input_ids = chat_result.input_ids
+            attention_mask = getattr(chat_result, "attention_mask", None)
         elif isinstance(chat_result, dict) and "input_ids" in chat_result:
             input_ids = chat_result["input_ids"]
+            attention_mask = chat_result.get("attention_mask")
         else:
-            input_ids = chat_result
+            input_ids = chat_result  # bare tensor, no attention_mask available
     except Exception:
         # Not every tokenizer ships a chat template -- fall back to plain
-        # encoding rather than crash outright.
-        input_ids = tokenizer(prompt_text, return_tensors="pt").input_ids.to(hf_model.device)
+        # encoding rather than crash outright. The plain tokenizer call also
+        # produces a real attention_mask, worth passing through the same way.
+        encoded = tokenizer(prompt_text, return_tensors="pt")
+        input_ids = encoded.input_ids.to(hf_model.device)
+        attention_mask = encoded.get("attention_mask")
+        if attention_mask is not None:
+            attention_mask = attention_mask.to(hf_model.device)
 
     input_len = input_ids.shape[1]
     generate_kwargs = dict(
@@ -450,6 +468,8 @@ def _call_local_transformers(
         do_sample=(temperature > 0),
         pad_token_id=tokenizer.eos_token_id,
     )
+    if attention_mask is not None:
+        generate_kwargs["attention_mask"] = attention_mask
     if temperature > 0:
         generate_kwargs["temperature"] = temperature  # transformers warns if this
                                                           # is set alongside

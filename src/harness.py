@@ -381,20 +381,31 @@ _local_model_cache: dict[str, tuple[Any, Any]] = {}  # model_name -> (tokenizer,
 
 def _get_local_model(model_name: str) -> tuple[Any, Any]:
     """
-    Lazy-load and cache a HF tokenizer+model for direct in-process generation.
+    Lazy-load and cache a HF processor+model for direct in-process generation.
     Loaded once per process -- first call is genuinely slow (real model download
     and load onto GPU), every call after reuses the cached model. Deliberately no
     eviction: this project only ever runs one local model (MedGemma) per session.
+
+    Uses AutoModelForImageTextToText + AutoProcessor, NOT AutoModelForCausalLM +
+    AutoTokenizer. MedGemma-4B is a genuinely multimodal (text+vision) checkpoint
+    (confirmed: weight loading includes model.vision_tower.*, and Google's own
+    documentation lists "Text, vision" as its modalities) -- loading a multimodal
+    checkpoint through a plain causal-LM wrapper is a real architecture mismatch,
+    not just a style choice. It's how this repeatedly produced all-<pad> output
+    on real Kaggle runs: real MedQA questions in, garbage out, even after the
+    attention_mask fix, because the model class itself was wrong for this
+    checkpoint. AutoProcessor wraps the same tokenizer, so .apply_chat_template()
+    and .decode() below still work the same way; only the loading classes changed.
     """
     if model_name not in _local_model_cache:
         import torch
-        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from transformers import AutoModelForImageTextToText, AutoProcessor
 
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        model = AutoModelForCausalLM.from_pretrained(
+        processor = AutoProcessor.from_pretrained(model_name)
+        model = AutoModelForImageTextToText.from_pretrained(
             model_name, torch_dtype=torch.float16, device_map="auto",
         )
-        _local_model_cache[model_name] = (tokenizer, model)
+        _local_model_cache[model_name] = (processor, model)
     return _local_model_cache[model_name]
 
 
@@ -411,76 +422,62 @@ def _call_local_transformers(
     """
     import torch
 
-    tokenizer, hf_model = _get_local_model(model)
+    processor, hf_model = _get_local_model(model)
     if seed is not None:
         torch.manual_seed(seed)  # only affects sampling; irrelevant at temperature
                                    # 0 / greedy decoding, which is every case in
                                    # this project today -- harmless to set regardless.
 
     prompt_text = messages[0]["content"]
-    attention_mask = None
     try:
-        chat_result = tokenizer.apply_chat_template(
-            [{"role": "user", "content": prompt_text}],
-            add_generation_prompt=True, return_tensors="pt",
-        )
-        # apply_chat_template does NOT reliably return a bare tensor. Some
-        # tokenizers (confirmed: MedGemma's, likely because it's built on a
-        # multimodal-capable processor family even for text-only use) return a
-        # BatchEncoding-style wrapper instead -- a dict-like object holding
-        # input_ids, attention_mask, etc. as separate fields, with no .shape of
-        # its own. Calling .to(device) on it works fine either way (BatchEncoding
-        # supports that), which is why this bug didn't surface until the next
-        # line -- .shape[1] on the wrapper, not the tensor inside it. Handle
-        # both shapes of return value explicitly rather than assume one.
+        # return_dict=True forces a proper dict/BatchEncoding return carrying
+        # EVERY field the processor decides this model needs (input_ids,
+        # attention_mask, and potentially other multimodal-specific fields even
+        # in text-only mode) -- explicit, not guessed. A prior version handled
+        # "maybe a bare tensor, maybe a wrapper" defensively after the fact;
+        # asking for the dict directly removes that ambiguity up front.
         #
-        # The wrapper also carries a correctly-computed attention_mask alongside
-        # input_ids -- a prior fix here extracted input_ids and silently dropped
-        # it. Without an explicit attention_mask, generate() has to infer one
-        # from input_ids, which it cannot do reliably when pad_token_id ==
-        # eos_token_id (transformers warns about exactly this at call time) --
-        # confirmed as the actual cause: real MedGemma runs produced raw_output
-        # == '' on every single item, consistent with the model reading a
-        # mis-inferred mask and immediately emitting only an EOS token, which
-        # skip_special_tokens=True then strips down to an empty string.
-        chat_result = chat_result.to(hf_model.device)
-        if hasattr(chat_result, "input_ids"):
-            input_ids = chat_result.input_ids
-            attention_mask = getattr(chat_result, "attention_mask", None)
-        elif isinstance(chat_result, dict) and "input_ids" in chat_result:
-            input_ids = chat_result["input_ids"]
-            attention_mask = chat_result.get("attention_mask")
-        else:
-            input_ids = chat_result  # bare tensor, no attention_mask available
+        # Content is a list of typed blocks ({"type": "text", "text": ...}),
+        # not a bare string -- matches Google's own official "How to use"
+        # example for this exact model exactly. MedGemma's chat template is
+        # built to handle mixed text+image conversations, so a plain string is
+        # a less-exercised code path for this specific processor; matching the
+        # documented format removes that as a variable rather than leaving it
+        # as an unverified guess.
+        inputs = processor.apply_chat_template(
+            [{"role": "user", "content": [{"type": "text", "text": prompt_text}]}],
+            add_generation_prompt=True, return_tensors="pt", return_dict=True,
+        ).to(hf_model.device)
     except Exception:
-        # Not every tokenizer ships a chat template -- fall back to plain
-        # encoding rather than crash outright. The plain tokenizer call also
-        # produces a real attention_mask, worth passing through the same way.
-        encoded = tokenizer(prompt_text, return_tensors="pt")
-        input_ids = encoded.input_ids.to(hf_model.device)
-        attention_mask = encoded.get("attention_mask")
-        if attention_mask is not None:
-            attention_mask = attention_mask.to(hf_model.device)
+        # Not every processor ships a chat template -- fall back to plain
+        # encoding rather than crash outright.
+        inputs = processor(text=prompt_text, return_tensors="pt").to(hf_model.device)
 
-    input_len = input_ids.shape[1]
-    generate_kwargs = dict(
-        max_new_tokens=max_tokens,
-        do_sample=(temperature > 0),
-        pad_token_id=tokenizer.eos_token_id,
-    )
-    if attention_mask is not None:
-        generate_kwargs["attention_mask"] = attention_mask
+    input_len = inputs["input_ids"].shape[1]
+    generate_kwargs = dict(max_new_tokens=max_tokens, do_sample=(temperature > 0))
     if temperature > 0:
         generate_kwargs["temperature"] = temperature  # transformers warns if this
                                                           # is set alongside
                                                           # do_sample=False, so omit
                                                           # it entirely at temp 0.
+    # Deliberately NOT setting pad_token_id/eos_token_id here. A prior version
+    # hardcoded pad_token_id=tokenizer.eos_token_id -- wrong for MedGemma, which
+    # has its own distinct real pad token (confirmed against a real loaded
+    # instance: pad_token_id=0, eos_token_id=1, genuinely different tokens). The
+    # model's own generation_config already has both configured correctly
+    # (confirmed directly: eos_token_id=[1, 106], covering both <eos> and Gemma's
+    # <end_of_turn>; pad_token_id=0) -- trust that instead of overriding it with
+    # a guess.
 
     with torch.no_grad():
-        output_ids = hf_model.generate(input_ids, **generate_kwargs)
+        # **inputs unpacks EVERYTHING the processor produced -- not just the
+        # two fields we happen to know the names of. More robust for whatever
+        # this specific multimodal architecture actually requires than manually
+        # extracting input_ids/attention_mask and hoping nothing else matters.
+        output_ids = hf_model.generate(**inputs, **generate_kwargs)
 
     completion_ids = output_ids[0][input_len:]
-    content = tokenizer.decode(completion_ids, skip_special_tokens=True)
+    content = processor.decode(completion_ids, skip_special_tokens=True)
 
     return SimpleNamespace(
         choices=[SimpleNamespace(message=SimpleNamespace(content=content))],

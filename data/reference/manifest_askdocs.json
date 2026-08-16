@@ -1,0 +1,13 @@
+{
+  "source": "r/AskDocs via Arctic Shift download tool",
+  "raw_file": "/mnt/user-data/uploads/r_AskDocs_posts.jsonl",
+  "raw_file_sha256": "1b269318798226c1473e8bdde6c8b1e9c53730095180f36d4fd58381284be15b",
+  "cleaning_counts": {
+    "total_lines": 18279,
+    "dropped_removed_or_empty": 0,
+    "dropped_bot_or_deleted_author": 136,
+    "dropped_duplicate": 90,
+    "dropped_under_min_words": 2239,
+    "kept": 15814
+  }
+}

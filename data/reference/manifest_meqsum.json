@@ -1,0 +1,11 @@
+{
+  "source": "MeQSum (Ben Abacha & Demner-Fushman, ACL 2019)",
+  "source_url": "https://github.com/abachaa/MeQSum",
+  "citation": "Asma Ben Abacha and Dina Demner-Fushman. 2019. On the Summarization of Consumer Health Questions. ACL 2019.",
+  "source_file_sha256": "abedd939d5014306ca576522416bf69103e85dc8fcf1668a4099e8b84a39eeea",
+  "total_rows_in_source": 1000,
+  "items_kept": 1000,
+  "duplicates_dropped": 0,
+  "field_used": "CHQ (original question) -- NOT Summary",
+  "cleaning": "SUBJECT:/MESSAGE: form scaffolding stripped when present (not universal across rows -- confirmed empirically)"
+}

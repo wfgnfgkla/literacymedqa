@@ -115,6 +115,17 @@ This writes:
 By default, scoring uses `prompt_condition=plain`, `clinical_level=a`, and
 `low_literacy_level=c`. Override those only if the locked config names change.
 
+To give the team an early preview of the final results format from pilot rows:
+
+```bash
+python src/draft_results_table.py data/pilot_results.jsonl
+```
+
+This writes `data/pilot_draft_results_table.csv` and
+`data/pilot_draft_results_table.md`, combining accuracy by level, `acc(a)-acc(c)`,
+`acc(b)-acc(c)`, right-to-wrong flips, McNemar p-values, and clarify-prompt
+recovery when the pilot includes the intervention rows.
+
 ## Realism Gate
 
 Blind-rater labels should use the template in `templates/realism_ratings_template.csv`:

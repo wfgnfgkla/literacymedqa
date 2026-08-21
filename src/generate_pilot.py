@@ -63,10 +63,74 @@ BASE_BACKOFF_SECONDS = 1.5
 # calls. Raised, not removed: a stuck connection must still fail loudly.
 CLIENT_TIMEOUT_SECONDS = 120.0
 
-# `\d+(?:\.\d+)?` and not `\d+\.?\d*` on the trailing period: "potassium is 5.8."
-# must yield 5.8, not 5.8-with-the-sentence-period glued on, or every fact landing
-# at the end of a sentence would look like a dropped number.
-NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
+# Number extraction for the fidelity check.
+#
+# The naive `\d+(?:\.\d+)?` produced a ~60% flag rate on the first 5-item sample and
+# every single flag was spurious. Four distinct causes, all handled here:
+#
+#   "250,000/mm3"      -> split into 250 AND 000, and the mm3 unit yielded a bare 3
+#   "1st step"         -> the ordinal in the question sentence yielded a bare 1
+#   "36.5C (97.7F)"    -> the model keeps Celsius and drops the redundant Fahrenheit
+#   "2 glasses"        -> level (b) legitimately writes "two glasses" in prose
+#
+# Still `(?:\.\d+)?` and never `\.?\d*` on the tail, so "potassium is 5.8." yields 5.8
+# rather than swallowing the sentence period.
+#
+# The lookarounds are what kill the mm3/1st class: a digit welded to a letter is part
+# of a unit or an ordinal, not a clinical quantity. The leading `.` in the lookbehind
+# stops us restarting inside a decimal we already consumed.
+NUMBER_RE = re.compile(
+    r"(?<![A-Za-z0-9.])\d{1,3}(?:,\d{3})+(?:\.\d+)?(?![A-Za-z])"  # 250,000
+    r"|"
+    r"(?<![A-Za-z0-9.])\d+(?:\.\d+)?(?![A-Za-z])"                 # 36.5, 98, 5.8
+)
+
+# Parenthetical unit restatements. MedQA writes "36.5C (97.7F)" and "4 kg (8.8 lb)";
+# a patient repeats one unit, not both. The number inside such a parenthetical is the
+# same fact as the one outside it, so it is not independently required.
+CONVERSION_PAREN = re.compile(
+    r"\(\s*[\d,]+(?:\.\d+)?\s*"
+    r"(?:°\s*)?(?:F|C|lb|lbs|pound|pounds|oz|ounce|ounces|kg|g|in|inch|inches"
+    r"|ft|feet|cm|mm|mL|L)\b[^)]*\)",
+    re.IGNORECASE,
+)
+
+_ONES = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight",
+         "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
+         "sixteen", "seventeen", "eighteen", "nineteen"]
+_TENS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy",
+         "eighty", "ninety"]
+
+
+def _spellings(value: float) -> list[str]:
+    """Word forms a rewrite might use instead of the digits.
+
+    Only whole numbers below 100. Nobody writes "thirty-six point five" for a
+    temperature, and pretending otherwise would invent matches that mask real drops.
+    """
+    if value != int(value) or not (0 <= value < 100):
+        return []
+    n = int(value)
+    if n < 20:
+        return [_ONES[n]]
+    tens, ones = divmod(n, 10)
+    if ones == 0:
+        return [_TENS[tens]]
+    return [f"{_TENS[tens]}-{_ONES[ones]}", f"{_TENS[tens]} {_ONES[ones]}"]
+
+
+def _numbers(text: str) -> set[float]:
+    """Numeric values in a piece of text, comma groupings normalized.
+
+    Values, not strings, so "37.0" and "37" are the same fact -- which they are.
+    """
+    out: set[float] = set()
+    for tok in NUMBER_RE.findall(text):
+        try:
+            out.add(float(tok.replace(",", "")))
+        except ValueError:
+            continue
+    return out
 
 # A rewrite this much shorter than its original has almost certainly dropped
 # content wholesale rather than merely compressed register.
@@ -209,7 +273,9 @@ def structural_flags(stem: str, level_b: str, level_c: str) -> list[str]:
     keeping the item preserves that decision for someone who can make it.
     """
     flags: list[str] = []
-    stem_numbers = set(NUMBER_RE.findall(stem))
+    # Conversion parentheticals stripped BEFORE extraction, so the Fahrenheit in
+    # "36.5C (97.7F)" is never required in the first place.
+    required = _numbers(CONVERSION_PAREN.sub(" ", stem))
 
     for label, text in (("b", level_b), ("c", level_c)):
         if text is None:
@@ -221,15 +287,18 @@ def structural_flags(stem: str, level_b: str, level_c: str) -> list[str]:
         if len(text) < MIN_LENGTH_RATIO * len(stem):
             flags.append(f"short_level_{label}")
 
-        # Set difference on extracted numbers, not substring search: a substring
-        # test for "3" would be satisfied by the "3" inside "37", silently passing
-        # an item whose 3 really did go missing.
-        missing = stem_numbers - set(NUMBER_RE.findall(text))
+        # Compared as numeric values, not substrings: a substring test for "3" would
+        # be satisfied by the "3" inside "37", silently passing an item whose 3 really
+        # did go missing.
+        present = _numbers(text)
+        lowered = text.lower()
+        missing = sorted(
+            v for v in required - present
+            if not any(w in lowered for w in _spellings(v))
+        )
         if missing:
-            ordered = [n for n in NUMBER_RE.findall(stem) if n in missing]
-            seen: set[str] = set()
-            deduped = [n for n in ordered if not (n in seen or seen.add(n))]
-            flags.append(f"dropped_numbers_{label}:{','.join(deduped)}")
+            shown = [f"{v:g}" for v in missing]
+            flags.append(f"dropped_numbers_{label}:{','.join(shown)}")
 
     return flags
 

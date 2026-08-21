@@ -2,6 +2,57 @@
 
 Every config or prompt version bump gets an entry, with the reason and what was regenerated.
 
+## config_version 3 — 2026-08-20
+
+Rewriter prompt v2 -> v3. PRE-PILOT PROMPT DEVELOPMENT — not an iteration; see the
+accounting note under config_version 2. Still no pilot generated.
+
+**Regenerated:** nothing. A second 5-item smoke sample, discarded.
+
+**Why v3 — v2 fixed two of its four targets and missed two**
+
+What v2 fixed and v3 keeps: level (c) FK moved 4.74 -> 6.61 (gate delta 2.76 -> 0.89
+against askdocs median, threshold 2.0), and every jargon term v1 leaked was gone —
+popliteal, prothrombin, thromboplastin, mixing study, guarding, rebound all absent.
+
+What v2 missed:
+- The opening template did not break, it mutated. All five v2 rewrites opened with "so",
+  and three of five still named the venue in the first clause. Instruction plus four
+  varied few-shot examples did not hold, so v3 constrains it directly: "so", "ok so",
+  "okay so", "hi", "hey" and "well" are forbidden as the first word, and naming where
+  they are or who they saw is forbidden in the first sentence outright.
+- Few-shot count cut from four to two. Five examples appear to have taught an average
+  shape rather than a range. The two remaining are deliberately unalike on every axis —
+  parent vs patient, child vs adult, respiratory vs abdominal, symptom-opening vs
+  timing-opening, thin vitals vs heavy lab panel — and the prompt tells the model
+  explicitly not to average them.
+- Typo variation did not land. C3 listed eight error types and the output delivered
+  essentially one (missing apostrophes), plus two rewrites containing CORRECT apostrophes
+  ("wasn't", "someone else's") which read more literate than v1 did. v3 makes it a
+  countable requirement — at least three DISTINCT types per rewrite, three of the same
+  kind does not count — adds a worked example showing a phonetic misspelling, a doubled
+  letter and a self-correction in one line, and forbids correct contractions outright.
+
+**Also in v3**
+- FK floor now binds as hard as the ceiling (C4). v2's item 2 came in at 4.61, below band,
+  because "simpler feels safer". It is not safer; it is a different way of failing, and
+  the prompt now says so and aims for the middle of the band near 7 rather than the edge.
+- New section C1b: told-to-them technical terms become reported speech, NEVER a lay
+  reinterpretation that changes the claim. v2's item 4 rendered "ST-segment elevations in
+  the anterior leads" as "changes in the front part of my heart". Leads are electrode
+  positions on the chest, not a region of the heart — that is not simplification, it is a
+  new and wrong clinical claim the original never made. Vagueness is allowed; guessing is
+  not. Two further worked pairs cover bibasilar rales and urine beta-hCG.
+
+**Tooling, same bump**
+- generate_pilot.py: digit + hyphen + alphabetic run of >=6 is treated as a compound-name
+  locant, not a quantity. The 5 in "5-hydroxyindoleacetic acid" was being required of a
+  rewrite that C1 explicitly instructs to say "some acid thing" — the check was flagging
+  the prompt for obeying itself. MedQA is full of these. 6-pack, 3-cm, 58-year-old and
+  11-month-old stay required; verified both directions.
+
+Gate thresholds untouched, as under config_version 2.
+
 ## config_version 2 — 2026-08-20
 
 Rewriter prompt v1 -> v2. PRE-PILOT PROMPT DEVELOPMENT — not an iteration.

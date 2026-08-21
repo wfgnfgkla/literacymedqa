@@ -3,7 +3,7 @@
 # and regenerate every affected artifact from scratch. Log the reason in CHANGELOG.md.
 
 run:
-  config_version: 2
+  config_version: 3
   lock_status: provisional
   seed: 20260807
   # Set to false once the pilot gates pass and full generation begins.
@@ -123,7 +123,7 @@ prompt_conditions:
     # Intervention arm. Applied to level (c) only.
 
 generation:
-  rewriter_prompt: prompts/rewriter_v2.txt
+  rewriter_prompt: prompts/rewriter_v3.txt
   max_regeneration_attempts: 3
   # Items still failing fidelity after 3 attempts are DROPPED, not retried.
   # Unlimited retries select for rewrites the filter happens to like.

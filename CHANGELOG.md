@@ -2,6 +2,61 @@
 
 Every config or prompt version bump gets an entry, with the reason and what was regenerated.
 
+## config_version 5 — 2026-08-20
+
+Rewriter prompt v4 -> v5. Pre-pilot prompt development, not an iteration. Narrow and
+final: two targeted fixes, nothing else touched.
+
+1. THE DEMOGRAPHICS STUB. v4's age/sex rule worked (sex 43 -> 88) but 54/100 rewrites
+   ended in a terse standalone aside — "im 68 by the way, and im a man." That did two
+   kinds of damage. It is the whole FK regression: deleting only that sentence moves the
+   corpus mean 6.58 -> 7.12 and below-6 39 -> 28, essentially back to v3. And a rewrite
+   that always ends the same way is a template a blind rater learns in two items, which
+   is the realism gate's exact failure mode.
+
+   The cause was v4's own examples — all three placed the demographics late AND as a
+   terminal stub, and the model copied the shape rather than the placement. v5 keeps late
+   placement and requires the age and sex to be FOLDED INTO A SENTENCE ALREADY CARRYING
+   OTHER CONTENT, with GOOD/BAD pairs contrasting an embedded clause against a stub, and
+   an instruction to vary the position within the last third. The three examples now
+   place it at 71%, 70% and 86% of the way through, in sentences of 43, 39 and 23 words,
+   and only one is the final sentence.
+
+2. THE POSSESSIVE / NARRATOR BUG, now an explicit rule rather than another example pair,
+   since two example pairs failed to reach it. v3 rendered "His mother has a backyard
+   garden" as "his mom has a garden" (speaker becomes the father); v4 rendered it "my mom
+   has a garden" (speaker becomes the grandmother). The rule now states directly that
+   when the narrator is a family member, every possessive referring to that narrator's
+   own relationships stays first person — "i have a garden out back" — and that carrying
+   the stem's third-person possessive across unchanged silently invents a different
+   narrator.
+
+C1 (jargon), C2 (opening) and C3 (typos) are carried over BYTE-IDENTICAL from v4 and were
+diffed to confirm it. Gate thresholds untouched.
+
+### OPEN QUESTION, NOT A DEFECT: the 15 lab-name retentions
+
+16/100 level (c) rewrites retain a clinical term, and the count did not move between v3
+and v4 — the SAME 15 items with identical per-term counts (creatinine 7, bilirubin 5,
+alkaline phosphatase 3, prothrombin 2). Three prompt revisions failed to shift it, which
+is fairly strong evidence that prompt wording is not the instrument that reaches it.
+
+v5 deliberately does not try again, and these retentions should NOT be logged as an
+unfixed defect. The open question is whether they need fixing at all:
+
+- Real patients do repeat lab names their doctor told them. "they said my creatinine was
+  2.9" is plausible patient speech, not a register failure.
+- The reported-speech rule already preserves the clinical fact while changing the
+  register, which is the manipulation the benchmark is actually measuring.
+- Whether these 15 read as machine-written is exactly what the realism gate exists to
+  answer, and it has not run yet.
+
+DECISION DEFERRED TO THE REALISM GATE. If blind raters cannot pick these items out, the
+retentions are fine and C1 is if anything too strict. If raters do spot them, the fix is
+likely structural — an explicit banned-term list, or a detector plus targeted
+regeneration of just the offending items — rather than a fourth attempt at demonstrating
+it in a worked example.
+
 ## PILOT RUN — 100 items, config_version 4, 2026-08-20
 
 Second full pilot, v4 prompt. 100/100, 0 errors, served_by OpenAI x100, $0.0992.

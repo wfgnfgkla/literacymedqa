@@ -2,6 +2,53 @@
 
 Every config or prompt version bump gets an entry, with the reason and what was regenerated.
 
+## PILOT RUN — 100 items, config_version 5, 2026-08-20
+
+100/100, 0 errors, served_by OpenAI x100, $0.1071. prompt_hash d3b945443321..., all
+provenance fields uniform. Shared on the remote at blob 125508c9d608 (replacing the v4
+blob 7044ff17bb6a).
+
+**DOES NOT MEET THE SHIP CRITERION.** The bar was "FK in-band improves and nothing else
+regresses". FK in-band improved 47 -> 50, but sex and age presence both regressed, so
+this is a decision for Rithik rather than an automatic ship.
+
+    metric                  v4     v5
+    level (c) FK median   6.20   7.11   +0.91
+    level (c) FK mean     6.58   7.30   +0.71   delta from askdocs median 0.91 -> 0.20
+    FK below 6              39     21     -18
+    FK above 8              14     29     +15
+    FK in band              47     50      +3
+    terminal stub        54/100  7/77   FIXED
+    SEX stated              88     70     -18   <- REGRESSION
+    AGE stated              99     89     -10   <- REGRESSION
+    items flagged           27     42     +15
+    jargon leak             16     17      +1   (untouched by design)
+
+**The stub fix caused the sex regression, and the mechanism is exact.** v4's terminal stub
+— "im 68 by the way, and im a man" — was formulaic, but it reliably carried BOTH facts.
+v5 folds the demographics into a sentence doing other work, as intended, and the model
+keeps the age while dropping the sex: "im 39 and i drive a truck for a living", "im 29 and
+i got this thing called lupus". 20 items had sex in v4 and lost it in v5; only 2 went the
+other way. This is the same shape of failure as v4's FK regression: fixing the surface
+form of the demographics clause broke what the clause was carrying.
+
+**The "vary within the last third" instruction did not hold, but did not breach C2.**
+Position of the demographic mention swung to the opposite extreme from v4: median 0%, with
+51/77 in the first 10% of the text and only 10/77 (13%) in the final third. Critically,
+though, 0 of those are demographic RECITAL openings — the age is embedded in a first
+sentence that is genuinely about the symptom ("i got this sharp pain ... im 39 and i drive
+a truck"), not "im 45 and i went to the doctor". C2 is intact; banned openers are 1/100.
+
+**Everything else held.** venue in first sentence 44 -> 41, banned opener 2 -> 1, typo
+types below 3: 33 -> 32, served_by single upstream for the fourth run running. Both
+clustering patterns persist: FK below-6 is 37% on long stems and 32% on lab-bearing stems;
+above-8 is 47% on short stems (median 93 words vs corpus 119).
+
+**If a v6 is wanted, the target is narrow:** require age and sex in the SAME clause as each
+other, folded into content, without prescribing a position. v4 proved the pairing holds
+when they are adjacent; v5 proved that folding works but splits them. Nobody has yet tried
+both constraints at once.
+
 ## config_version 5 — 2026-08-20
 
 Rewriter prompt v4 -> v5. Pre-pilot prompt development, not an iteration. Narrow and

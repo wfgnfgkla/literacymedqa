@@ -2,6 +2,50 @@
 
 Every config or prompt version bump gets an entry, with the reason and what was regenerated.
 
+## PILOT RUN — 100 items, config_version 3, 2026-08-20
+
+First actual pilot. Not a version bump; recorded here because this is the artifact the
+task is about and its provenance needs to be reconstructible.
+
+    items          100 / 100, 0 errors
+    prompt         prompts/rewriter_v3.txt
+    prompt_hash    e084ef1dd17b5332a9b928c2d9218d6d8fe3973d2c8ea0757cdc9e0ba8e0e4a5
+    rewriter       openai/gpt-4o-mini @ gpt-4o-mini-2024-07-18 (lock_status provisional)
+    served_by      OpenAI x100 -- single upstream, no fallback drift
+    output         data/pilot_rewrites.jsonl (gitignored)
+    cost           $0.0806
+
+All four provenance fields are uniform across all 100 rows: one prompt_hash, one model,
+one version, one config_version. prompt_hash and rewriter_version present on every row.
+
+**Headline results (distributions, not means)**
+- level (c) FK: median 6.79, mean 7.17, sd 2.03. Only 50% inside the 6-8 band —
+  25 below 6 and 25 above 8. The gate passes on the mean (delta 0.32 vs askdocs median,
+  threshold 2.0) but the mean is two opposite failure modes cancelling.
+- Jargon leakage: 16/100 level (c) rewrites retain a clinical term. Almost entirely lab
+  names (creatinine 7, bilirubin 5, alkaline phosphatase 3, prothrombin 2).
+- Structural flags: 29/100.
+- Opening: 0/100 use a banned opener, so v3's C2 ban held. 29/100 still name the venue
+  in the first sentence. No 2- or 3-word opening shape exceeds 20%.
+- Typo types: median 3, but 36/100 fall below the required 3 distinct types.
+
+**Two fidelity failures found by auditing the flags — both need fixing before the
+benchmark is usable**
+- AGE absent from a rewrite in 11 items (15 item/level pairs). Age is the first entry on
+  the decisive-facts list. All 11 were caught by the structural flag.
+- SEX absent from a rewrite in 56 items (63 item/level pairs). First-person narration
+  removes the pronoun cue, so unless the rewrite says "im a guy" / "im 24, female" the
+  patient's sex is unrecoverable. INVISIBLE to the structural flag, which only checks
+  numbers. Likely aggravated by v3's C2, which moved age and sex off the opening and
+  told the model to place them "wherever it lands naturally" -- often nowhere.
+
+**Known false positives still in the 29 flags**
+- `mm^3` with a caret: the superscript 3 is read as a quantity. The lookaround handles
+  `mm3` but not `mm^3`.
+- Unicode ℃ / ℉ (U+2103 / U+2109) as single glyphs: CONVERSION_PAREN expects "°C"/"°F",
+  so "(98.6℉)" is not recognised as a unit restatement and its value is required.
+- `gravida 2, para 1`: an obstetric code, not two independent quantities.
+
 ## config_version 3 — 2026-08-20
 
 Rewriter prompt v2 -> v3. PRE-PILOT PROMPT DEVELOPMENT — not an iteration; see the

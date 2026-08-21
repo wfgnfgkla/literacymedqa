@@ -2,6 +2,59 @@
 
 Every config or prompt version bump gets an entry, with the reason and what was regenerated.
 
+## PILOT RUN — 100 items, config_version 4, 2026-08-20
+
+Second full pilot, v4 prompt. 100/100, 0 errors, served_by OpenAI x100, $0.0992.
+prompt_hash 0d3f1575e9f2..., all provenance fields uniform across all rows.
+
+**v3 -> v4, measured on the same 100 items**
+
+    metric                  v3     v4
+    SEX stated              43     88     +45   <- the change that mattered
+    AGE stated              89     99     +10
+    items flagged           67     27     -40
+    closing sentiment        1      0     fixed
+    jargon leak             16     16     NO CHANGE
+    venue in 1st sentence   29     44     +15   <- regression
+    banned opener            0      2      +2   <- minor regression
+    level (c) FK mean      7.17   6.58   -0.59  <- regression
+    FK below 6              25     39     +14   <- regression
+    FK above 8              25     14     -11
+    FK sd                  2.03   1.63   -0.40
+
+**What worked.** The demographics rule did its job: sex present in 88/100 level (c) and
+age in 99/100, against 43 and 89 under v3. Combined with the fixed structural check that
+is a drop in flagged items from 67 to 27. Closing sentiment is gone entirely.
+
+**Three things did not, and two are worth naming precisely because the cause is known.**
+
+1. THE FK REGRESSION IS CAUSED BY THE DEMOGRAPHICS FIX. 54 of 100 rewrites now end in a
+   short standalone aside — "im 68 by the way, and im a man". Deleting just that sentence
+   moves the corpus mean from 6.58 back to 7.12 and the below-6 count from 39 to 28, i.e.
+   almost exactly v3's numbers. A short simple closing sentence drags a Flesch-Kincaid
+   score down hard. The fault is in v4's own worked examples: all three place the
+   demographics late AND as a terse standalone stub, and the model copied the shape rather
+   than the placement. A v5 should keep the late placement and fold the demographics into
+   a longer clause instead of a terminal stub.
+
+2. JARGON LEAKAGE DID NOT MOVE AT ALL. Not merely the same rate — the SAME 15 items, with
+   identical per-term counts: creatinine 7->7, bilirubin 5->5, alkaline phosphatase 3->3,
+   prothrombin 2->2. The restored lab-panel worked example changed nothing. Three prompt
+   revisions have now failed to shift this, which is evidence that a worked example is the
+   wrong instrument for it. Worth trying something structurally different — an explicit
+   banned-term list in the prompt, or a post-hoc detector plus targeted regeneration of
+   just the offending items, rather than a fourth attempt at demonstrating it.
+
+3. VENUE IN THE FIRST SENTENCE ROSE 29 -> 44 despite an unchanged ban, and 2 rewrites used
+   a banned opener where v3 had none. Plausibly the demographics moving out of the opening
+   left a gap that the venue filled. Not confirmed.
+
+Also unfixed: LMQ-1b81bdad880a, the narrator-relationship item that motivated priority 2.
+The stem reads "His mother has a backyard garden"; the narrator IS the mother, so the
+garden is hers. v3 wrote "his mom has a garden", making the speaker the father. v4 writes
+"my mom has a garden", making it the grandmother's. Both are wrong, differently. The
+worked pair did not generalise to the possessive form.
+
 ## config_version 4 — 2026-08-20
 
 Rewriter prompt v3 -> v4. PRE-PILOT PROMPT DEVELOPMENT — still not an iteration against

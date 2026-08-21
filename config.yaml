@@ -4,6 +4,7 @@
 
 run:
   config_version: 1
+  lock_status: provisional
   seed: 20260807
   # Set to false once the pilot gates pass and full generation begins.
   pilot_mode: true
@@ -50,9 +51,9 @@ levels:
 models:
   rewriter:
     # Must NOT appear in `evaluated`. Generates levels (b) and (c).
-    provider: azure_openai
-    name: gpt-4o-mini
-    version: null # <-- TODO: lock exact version string with Kiran
+    provider: openrouter
+    name: openai/gpt-4o-mini
+    version: gpt-4o-mini-2024-07-18 # PROVISIONAL - not confirmed with Kiran
     temperature: 0
     top_p: 1
     max_tokens: 1200
@@ -152,9 +153,26 @@ parsing:
 # Cost rates are USD per 1M tokens. VERIFY THESE AGAINST CURRENT PROVIDER PRICING
 # BEFORE TRUSTING ANY TOTAL — they change, and stale rates make the tracker lie.
 cost_rates_usd_per_1m:
+  # OpenRouter model IDs. The tracker looks up by the exact `models.*.name` string,
+  # so the rewriter's rate MUST be keyed 'openai/gpt-4o-mini' and not 'gpt-4o-mini'
+  # -- a near-miss key here is indistinguishable from "free" in the totals.
+  # Fetched from https://openrouter.ai/api/v1/models on 2026-08-20.
+  openai/gpt-4o-mini:
+    input: 0.15
+    output: 0.60
+  openai/gpt-4o:
+    input: 2.50
+    output: 10.00
+  # Bare Azure-era names, kept so any pre-OpenRouter log line still costs out.
   gpt-4o-mini:
-    input: null # <-- TODO: fill from provider pricing page
-    output: null
+    input: 0.15
+    output: 0.60
+  gpt-4o:
+    input: 2.50
+    output: 10.00
+  qwen/qwen2.5-72b-instruct:
+    input: null # nvidia_build free tier -- unconfirmed, left null rather than
+    output: null # assumed 0.0, so the tracker says "unknown" instead of "free"
   meta/llama-3.3-70b-instruct:
     input: 0.0 # free tier
     output: 0.0

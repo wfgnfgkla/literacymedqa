@@ -79,10 +79,12 @@ CLIENT_TIMEOUT_SECONDS = 120.0
 # The lookarounds are what kill the mm3/1st class: a digit welded to a letter is part
 # of a unit or an ordinal, not a clinical quantity. The leading `.` in the lookbehind
 # stops us restarting inside a decimal we already consumed.
+# The `^` in the lookbehind catches exponent notation: "6,000/mm^3" writes the same
+# superscript that "mm3" writes without a caret, and both are units rather than counts.
 NUMBER_RE = re.compile(
-    r"(?<![A-Za-z0-9.])\d{1,3}(?:,\d{3})+(?:\.\d+)?(?![A-Za-z])"  # 250,000
+    r"(?<![A-Za-z0-9.^])\d{1,3}(?:,\d{3})+(?:\.\d+)?(?![A-Za-z])"  # 250,000
     r"|"
-    r"(?<![A-Za-z0-9.])\d+(?:\.\d+)?(?![A-Za-z])"                 # 36.5, 98, 5.8
+    r"(?<![A-Za-z0-9.^])\d+(?:\.\d+)?(?![A-Za-z])"                 # 36.5, 98, 5.8
 )
 
 # Locants in hyphenated compound names: the 5 in "5-hydroxyindoleacetic acid" is part
@@ -98,12 +100,65 @@ COMPOUND_LOCANT = re.compile(r"(?<![A-Za-z0-9.])\d+(?:\.\d+)?-(?=[A-Za-z]{6,})")
 # Parenthetical unit restatements. MedQA writes "36.5C (97.7F)" and "4 kg (8.8 lb)";
 # a patient repeats one unit, not both. The number inside such a parenthetical is the
 # same fact as the one outside it, so it is not independently required.
+# MedQA writes the degree sign three ways: "°F", the single glyph "℉" (U+2109), and its
+# Celsius twin "℃" (U+2103). Matching only "°F" left "(98.6℉)" unrecognised as a unit
+# restatement, so its value was demanded of a rewrite that had correctly kept Celsius.
+DEGREE = "°º℃℉"
+# Units longest-first, closed by a not-a-letter lookahead rather than \b -- the degree
+# glyphs are not word characters, so \b behaves differently around them. The lookahead
+# is also what stops "(4 children)" matching "C" as a unit and being stripped whole,
+# which would silently drop a required number.
 CONVERSION_PAREN = re.compile(
     r"\(\s*[\d,]+(?:\.\d+)?\s*"
-    r"(?:°\s*)?(?:F|C|lb|lbs|pound|pounds|oz|ounce|ounces|kg|g|in|inch|inches"
-    r"|ft|feet|cm|mm|mL|L)\b[^)]*\)",
+    r"(?:[" + DEGREE + r"]\s*)?"
+    r"(?:[" + DEGREE + r"]|pounds|pound|ounces|ounce|inches|inch|feet|lbs|lb|oz|kg"
+    r"|cm|mm|mL|ft|in|F|C|L|g)"
+    r"(?![A-Za-z])[^)]*\)",
     re.IGNORECASE,
 )
+
+# Obstetric history is written as a code ("gravida 2, para 1", "G2P1") and retold as an
+# ordinal ("my second baby", "my first pregnancy went fine"). The fact survives intact;
+# only the surface form changes. Ordinals are accepted ONLY in this context -- adding
+# "first" to the general vocabulary would let the common phrase "at first" silently
+# satisfy any required 1.
+OBSTETRIC = re.compile(r"\b(?:gravida|para)\s*(\d+)|\bG(\d+)P(\d+)\b", re.IGNORECASE)
+ORDINALS = {1: "first", 2: "second", 3: "third", 4: "fourth", 5: "fifth",
+            6: "sixth", 7: "seventh", 8: "eighth", 9: "ninth", 10: "tenth"}
+
+# Demographics. Age and sex head the decisive-facts list, and first-person narration
+# strips the pronoun cue that would otherwise carry sex -- so unless the rewrite states
+# it, "a 45-year-old woman" becomes unrecoverable. A number-only check cannot see this:
+# in the v3 pilot 56 of 100 items lost sex and every one passed silently.
+AGE_RE = re.compile(r"(\d+)[-\s](?:year|yr|month|week|day)s?[-\s]old", re.IGNORECASE)
+SEX_NOUN_RE = re.compile(
+    r"\b(?:man|male|boy|gentleman|woman|female|girl|lady)\b", re.IGNORECASE)
+MALE_MARKERS = re.compile(
+    r"\b(man|male|boy|guy|dude|he|his|him|himself|father|dad|son|husband|brother|"
+    r"gentleman|mr)\b", re.IGNORECASE)
+FEMALE_MARKERS = re.compile(
+    r"\b(woman|female|girl|gal|she|her|herself|mother|mom|daughter|wife|sister|"
+    r"lady|mrs|ms)\b", re.IGNORECASE)
+MALE_WORDS = {"man", "male", "boy", "gentleman"}
+FEMALE_WORDS = {"woman", "female", "girl", "lady"}
+
+
+def stem_age(stem: str) -> float | None:
+    m = AGE_RE.search(stem)
+    return float(m.group(1)) if m else None
+
+
+def stem_sex(stem: str) -> str | None:
+    """'M' / 'F' / None, from the first sex noun in the stem.
+
+    The noun, not pronoun counts: MedQA opens "A 55-year-old man ...", and later
+    pronouns in the same stem always agree with it.
+    """
+    m = SEX_NOUN_RE.search(stem)
+    if not m:
+        return None
+    w = m.group(0).lower()
+    return "M" if w in MALE_WORDS else ("F" if w in FEMALE_WORDS else None)
 
 _ONES = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight",
          "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
@@ -288,6 +343,10 @@ def structural_flags(stem: str, level_b: str, level_c: str) -> list[str]:
     # "36.5C (97.7F)" is never required in the first place.
     required = _numbers(CONVERSION_PAREN.sub(" ", stem))
 
+    obstetric = {float(g) for m in OBSTETRIC.finditer(stem) for g in m.groups() if g}
+    age = stem_age(stem)
+    sex = stem_sex(stem)
+
     for label, text in (("b", level_b), ("c", level_c)):
         if text is None:
             flags.append(f"missing_level_{label}")
@@ -303,13 +362,29 @@ def structural_flags(stem: str, level_b: str, level_c: str) -> list[str]:
         # did go missing.
         present = _numbers(text)
         lowered = text.lower()
-        missing = sorted(
-            v for v in required - present
-            if not any(w in lowered for w in _spellings(v))
-        )
+
+        def satisfied(v: float) -> bool:
+            if v in present:
+                return True
+            if any(w in lowered for w in _spellings(v)):
+                return True
+            # "gravida 2" retold as "my second baby".
+            if v in obstetric and ORDINALS.get(int(v), "\0") in lowered:
+                return True
+            return False
+
+        missing = sorted(v for v in required if not satisfied(v))
         if missing:
-            shown = [f"{v:g}" for v in missing]
-            flags.append(f"dropped_numbers_{label}:{','.join(shown)}")
+            flags.append(f"dropped_numbers_{label}:{','.join(f'{v:g}' for v in missing)}")
+
+        # Demographics, checked separately because sex is not a number and the loop
+        # above is structurally incapable of seeing it.
+        if age is not None and not satisfied(age):
+            flags.append(f"missing_age_{label}")
+        if sex is not None:
+            pattern = MALE_MARKERS if sex == "M" else FEMALE_MARKERS
+            if not pattern.search(text):
+                flags.append(f"missing_sex_{label}")
 
     return flags
 

@@ -3,7 +3,7 @@
 # and regenerate every affected artifact from scratch. Log the reason in CHANGELOG.md.
 
 run:
-  config_version: 1
+  config_version: 2
   lock_status: provisional
   seed: 20260807
   # Set to false once the pilot gates pass and full generation begins.
@@ -123,7 +123,7 @@ prompt_conditions:
     # Intervention arm. Applied to level (c) only.
 
 generation:
-  rewriter_prompt: prompts/rewriter_v1.txt
+  rewriter_prompt: prompts/rewriter_v2.txt
   max_regeneration_attempts: 3
   # Items still failing fidelity after 3 attempts are DROPPED, not retried.
   # Unlimited retries select for rewrites the filter happens to like.
@@ -134,6 +134,11 @@ gates:
     max_rater_accuracy: 0.75
     # Level (c) readability must land near the real-patient corpus.
     max_fk_grade_delta: 2.0
+    # Which summary statistic of that corpus the delta is measured against.
+    # Stated explicitly because median (7.496) and mean (8.463) return different
+    # verdicts on identical data, and an unstated choice is one that gets made
+    # after seeing results. The threshold above is pre-registered and unchanged.
+    fk_delta_reference_statistic: median
     # Added after Yun et al. (2026), who used this scorer. Lets us show our
     # manipulation is stronger than their lexical-only simplification
     # (their technical median 4.52 -> plain 3.83).

@@ -715,11 +715,32 @@ def _mock_response(
 # --------------------------------------------------------------------------- #
 
 
-def _existing_keys(results_path: str | Path) -> set[tuple]:
+def _existing_keys(results_path: str | Path) -> tuple[set[tuple], dict[tuple, tuple]]:
+    """Returns (done_keys, fingerprint_by_base_key).
+
+    done_keys is fully-qualified: (item_id, model, level, prompt_condition,
+    prompt_hash, config_version). A row only counts as "already done" if its
+    fingerprint (prompt_hash, config_version) matches the CURRENT run's -- a row
+    written under an older prompt version or config_version does NOT silently
+    satisfy resume-safety for a run under a newer one, even though the base
+    (item_id, model, level, prompt_condition) key is identical.
+
+    fingerprint_by_base_key maps the base key to whatever fingerprint was last
+    seen for it in the file, used only to print a WARN when that fingerprint
+    differs from the current run's -- so a stale row is visible, not silent.
+
+    This matters because config_version legitimately changes across pilot
+    iterations (rewriter prompt v3 -> v4 -> v5, see CHANGELOG.md), and because a
+    smoke-test run and the real main run can share item_ids drawn from the same
+    frozen base set. Without the fingerprint, a row written by an old pilot
+    version -- or by a smoke test -- would look identical to a row the real run
+    was supposed to produce, and would be silently skipped instead of re-run.
+    """
     path = Path(results_path)
     if not path.exists():
-        return set()
-    keys = set()
+        return set(), {}
+    done_keys: set[tuple] = set()
+    fingerprint_by_base_key: dict[tuple, tuple] = {}
     with open(path, encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
@@ -729,8 +750,11 @@ def _existing_keys(results_path: str | Path) -> set[tuple]:
                 r = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            keys.add((r.get("item_id"), r.get("model"), r.get("level"), r.get("prompt_condition")))
-    return keys
+            base_key = (r.get("item_id"), r.get("model"), r.get("level"), r.get("prompt_condition"))
+            fingerprint = (r.get("prompt_hash"), r.get("config_version"))
+            done_keys.add(base_key + fingerprint)
+            fingerprint_by_base_key[base_key] = fingerprint
+    return done_keys, fingerprint_by_base_key
 
 
 def run_batch(
@@ -743,13 +767,29 @@ def run_batch(
     prompt_condition: str | None = None,
     mock: bool = False,
     sleep_between_calls: float = 0.0,
+    results_file: str | Path | None = None,
 ) -> dict[str, int]:
     """
     Run every (item, model) pair, appending each result as one JSON line to
-    config.yaml's logging.results_file. Resume-safe: on start, any
-    (item_id, model, level, prompt_condition) key already present in the results
-    file is skipped, so restarting after a crash never re-spends money on work
-    already done and never duplicates rows.
+    a results file. Resume-safe: on start, any (item_id, model, level,
+    prompt_condition, prompt_hash, config_version) key already present in the
+    results file is skipped, so restarting after a crash never re-spends money
+    on work already done and never duplicates rows. The fingerprint
+    (prompt_hash, config_version) is part of that key deliberately -- see
+    _existing_keys()'s docstring for why a bare (item_id, model, level,
+    prompt_condition) key is not sufficient on its own.
+
+    results_file: where to write/read results. Defaults to config.yaml's
+    logging.results_file (the shared file the real main run reads and writes).
+    Callers doing pilot or smoke-test work should pass an explicit, separate
+    path (e.g. "data/pilot_results.jsonl") instead of accepting the default --
+    writing pilot-stage rows into the same file the main run's own resume-safety
+    check reads from means a pilot item_id that happens to also appear in the
+    full N-item set would look "already done" to the real run and get silently
+    skipped. Keeping pilot and main-run output in separate files is the primary
+    defense; the fingerprint check above is the secondary one, for cases where
+    the same file legitimately gets reused across a config_version bump (e.g.
+    successive pilot iterations sharing data/pilot_results.jsonl).
 
     A problem with ONE model (missing credentials, an auth error, a bad request,
     a dead local server) is logged and that model is skipped -- it does NOT abort
@@ -764,7 +804,7 @@ def run_batch(
     catchable_errors = catchable_run_errors()
 
     cfg = _load_config(config_path)
-    results_path = Path(cfg["logging"]["results_file"])
+    results_path = Path(results_file) if results_file is not None else Path(cfg["logging"]["results_file"])
     results_path.parent.mkdir(parents=True, exist_ok=True)
     tracker = CostTracker.from_config(config_path)
 
@@ -788,8 +828,22 @@ def run_batch(
                 print(f"  SKIP {msg}", file=sys.stderr)
         model_ids = [m for m in model_ids if m in ready]
 
-    already = _existing_keys(results_path)
+    already, fingerprint_by_base_key = _existing_keys(results_path)
     counts = {"run": 0, "skipped": 0, "failed": 0}
+    stale_warned = 0
+    STALE_WARN_LIMIT = 5  # print the first few individually, then just a count --
+    # a run that shares a results file across many config_version bumps (a pilot
+    # regenerated several times, say) can have hundreds of stale rows, and a
+    # wall of identical WARN lines is worse than useless in a real terminal.
+
+    # Computed once, not per-item: prompt text is cached by _load_prompt (see its
+    # docstring), and config_version is a single scalar for the whole run. This is
+    # the SAME fingerprint run_model() will independently compute and write into
+    # each record -- kept in sync deliberately, not re-derived from the record
+    # after the fact, so what gets checked and what gets written can never drift.
+    _, current_prompt_hash = _load_prompt(prompt_template)
+    current_config_version = cfg.get("run", {}).get("config_version")
+    current_fingerprint = (current_prompt_hash, current_config_version)
 
     with open(results_path, "a", encoding="utf-8") as out_fh:
         for model_id in model_ids:
@@ -801,10 +855,29 @@ def run_batch(
 
             cond = prompt_condition or Path(prompt_template).stem
             for item in items:
-                key = (item["item_id"], resolved_name, item.get("level"), cond)
+                base_key = (item["item_id"], resolved_name, item.get("level"), cond)
+                key = base_key + current_fingerprint
                 if key in already:
                     counts["skipped"] += 1
                     continue
+                stale_fingerprint = fingerprint_by_base_key.get(base_key)
+                if stale_fingerprint is not None and stale_fingerprint != current_fingerprint:
+                    stale_warned += 1
+                    if stale_warned <= STALE_WARN_LIMIT:
+                        print(
+                            f"  WARN stale result for {base_key}: recorded under "
+                            f"prompt_hash={stale_fingerprint[0]}, config_version="
+                            f"{stale_fingerprint[1]}; current run is prompt_hash="
+                            f"{current_fingerprint[0]}, config_version={current_fingerprint[1]}. "
+                            f"Re-running rather than trusting the stale row.",
+                            file=sys.stderr,
+                        )
+                    elif stale_warned == STALE_WARN_LIMIT + 1:
+                        print(
+                            f"  WARN ... further stale-result warnings suppressed "
+                            f"(see the final count below).",
+                            file=sys.stderr,
+                        )
                 try:
                     record = run_model(
                         model_id,
@@ -829,8 +902,16 @@ def run_batch(
                 out_fh.flush()
                 os.fsync(out_fh.fileno())
                 already.add(key)
+                fingerprint_by_base_key[base_key] = current_fingerprint
                 counts["run"] += 1
                 if sleep_between_calls:
                     time.sleep(sleep_between_calls)
+
+    if stale_warned:
+        print(
+            f"  {stale_warned} row(s) total were re-run because their recorded "
+            f"fingerprint (prompt_hash, config_version) didn't match this run's.",
+            file=sys.stderr,
+        )
 
     return counts

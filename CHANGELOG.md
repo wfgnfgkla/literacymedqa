@@ -2,6 +2,66 @@
 
 Every config or prompt version bump gets an entry, with the reason and what was regenerated.
 
+## config_version 4 — 2026-08-20
+
+Rewriter prompt v3 -> v4. PRE-PILOT PROMPT DEVELOPMENT — still not an iteration against
+the 3-attempt cap; see the accounting note under config_version 2.
+
+Driven by the 100-item v3 pilot, in priority order. The headline finding is that the
+worst problem was not a realism problem at all: 56 of 100 level (c) rewrites made the
+patient's SEX unrecoverable. Sex is decisive in MedQA constantly, so those items would be
+exposed to being dropped at the fidelity gate — a potential 56% drop rate, not a style
+blemish. Everything below is ordered by that.
+
+1. AGE AND SEX ARE MANDATORY AND EXPLICIT. New top-level section, placed before the
+   level definitions because it is a fidelity rule, not a register one. Third-person
+   vignettes carry sex in every he/she; first person deletes that cue, so unless the
+   rewrite says it, the fact is gone. "im 45" is explicitly called insufficient. All
+   three worked examples now state age and sex in their LAST sentence, so the rule cannot
+   rebuild the demographic opening that C2 exists to prevent.
+
+2. NARRATOR RELATIONSHIP IS A DECISIVE FACT. v3's LMQ-1b81bdad880a had the speaker write
+   "his mom has a garden", making the narrator the father when the stem's caregiver is
+   the mother. Worked BAD/GOOD pair added, plus an instruction to check every possessive,
+   since "his mom" / "her dad" / "my wife" each silently assign the narrator a role.
+
+3. LAB PANEL EXAMPLE RESTORED AS A THIRD EXAMPLE. Jargon leakage was 16/100 and 88%
+   concentrated on lab-bearing stems, over a small vocabulary: creatinine 7, bilirubin 5,
+   alkaline phosphatase 3, prothrombin 2. This is the demonstration that was cut at the
+   4->2 reduction in v3. Opening variety held at 100 items (0/100 banned openers, no
+   2- or 3-word shape above 20%), so the averaging risk of a third example is now worth
+   paying. The new example converts a six-test panel to reported speech with all six
+   numbers intact and names none of the tests. Example 2's one remaining "bilirubin" was
+   also removed, correctly hedged though it was — an example naming a term that leaked
+   five times is an example teaching it.
+
+4. FK DRIFT IS BIDIRECTIONAL AND LENGTH-DRIVEN. Long lab-dense step2/3 stems undershot
+   (43% below grade 6); short sparse step1 stems overshot (33% above grade 8). C4 now
+   names both directions: long originals keep their run-ons and digressions rather than
+   being compressed, short ones get ordinary connective talk rather than more clinical
+   nouns.
+
+5. NO CLOSING SENTIMENT. v3's LMQ-3576953f4a14 ended "just trying to understand what all
+   this means", which the original does not contain. Added to HARD PROHIBITIONS: a
+   feeling the stem does not state is a fact you invented, and a uniform closing plea is
+   also a strong tell, because real posts do not all end that way.
+
+C2 (opening ban) and C3 (typo rules) are carried over VERBATIM and were diffed to confirm
+it. Both held at 100 items and neither was touched. Gate thresholds untouched.
+
+**Tooling in the same bump** — see the commit for detail. The structural check now flags
+missing age and missing sex, which it was previously incapable of seeing; and three
+false-positive classes are fixed (caret exponents in mm^3, Unicode ℃/℉ single glyphs, and
+gravida/para retold as ordinals). Re-scoring the v3 pilot with the fixed check gives
+67/100 flagged rather than 29/100, with dropped_numbers_c falling 29 -> 24 as the false
+positives cleared.
+
+**Verification command — use this one, not the original.** The version in the task notes
+crashes on Windows, where open() defaults to cp1252 and the file legitimately contains
+"°" and curly apostrophes. It needs an explicit encoding before it goes in the appendix:
+
+    python -c "import json; r=[json.loads(l) for l in open('data/pilot_rewrites.jsonl', encoding='utf-8')]; print(len(r),'items'); print('prompt_hash all:', all('prompt_hash' in x for x in r)); print('version all:', all('rewriter_version' in x for x in r)); print('three levels:', all(all(k in x for k in ('level_a','level_b','level_c')) for x in r if 'error' not in x))"
+
 ## PILOT RUN — 100 items, config_version 3, 2026-08-20
 
 First actual pilot. Not a version bump; recorded here because this is the artifact the

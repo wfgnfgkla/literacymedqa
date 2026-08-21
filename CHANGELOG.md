@@ -4,11 +4,17 @@ Every config or prompt version bump gets an entry, with the reason and what was 
 
 ## config_version 2 — 2026-08-20
 
-Rewriter prompt v1 -> v2. Iteration 1 of the 3-attempt cap.
+Rewriter prompt v1 -> v2. PRE-PILOT PROMPT DEVELOPMENT — not an iteration.
 
-**Regenerated:** nothing yet. The only artifacts generated under v1 were a 5-item
-smoke sample, discarded. The 100-item pilot had not been generated, so this bump
-costs no completed work.
+**Iteration accounting:** the 3-attempt cap in `generation.max_regeneration_attempts`
+counts regenerations of the pilot from scratch. No pilot has been generated. Every
+artifact so far is a 5-item smoke sample used to read output before committing to a
+run. Prompt revisions at this stage consume no attempts against the cap, and this
+entry should not be read as spending one. Rithik is confirming the accounting with
+Kiran separately; if she counts differently, this note is the thing to correct.
+
+**Regenerated:** nothing. The only artifacts under v1 were a 5-item smoke sample,
+discarded.
 
 **Why v2 — all four changes driven by reading the v1 5-item sample**
 - Level (c) FK calibration target moved 4-6 -> 6-8. The v1 sample came in at mean FK

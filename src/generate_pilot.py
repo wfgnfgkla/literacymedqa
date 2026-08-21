@@ -85,6 +85,16 @@ NUMBER_RE = re.compile(
     r"(?<![A-Za-z0-9.])\d+(?:\.\d+)?(?![A-Za-z])"                 # 36.5, 98, 5.8
 )
 
+# Locants in hyphenated compound names: the 5 in "5-hydroxyindoleacetic acid" is part
+# of the substance's name, not a quantity. v2's C1 rule tells the rewriter to render
+# such a substance vaguely ("some acid thing"), which correctly loses the 5 -- so
+# requiring it would flag the prompt for obeying its own instructions.
+#
+# The >=6-letter run is what separates a chemical name from a real measurement:
+# "hydroxyindoleacetic" (19) and "hydroxyprogesterone" (19) qualify, while "6-pack"
+# (4) and "3-cm" (2) do not and stay required.
+COMPOUND_LOCANT = re.compile(r"(?<![A-Za-z0-9.])\d+(?:\.\d+)?-(?=[A-Za-z]{6,})")
+
 # Parenthetical unit restatements. MedQA writes "36.5C (97.7F)" and "4 kg (8.8 lb)";
 # a patient repeats one unit, not both. The number inside such a parenthetical is the
 # same fact as the one outside it, so it is not independently required.
@@ -124,6 +134,7 @@ def _numbers(text: str) -> set[float]:
 
     Values, not strings, so "37.0" and "37" are the same fact -- which they are.
     """
+    text = COMPOUND_LOCANT.sub(" ", text)
     out: set[float] = set()
     for tok in NUMBER_RE.findall(text):
         try:

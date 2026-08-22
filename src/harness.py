@@ -9,9 +9,12 @@ Everything else in this file exists to make that one call correct: reading model
 config, routing to the right backend, retrying only on transient failures, and
 logging every call through CostTracker.
 
-Four providers:
+Five providers:
     azure_openai        -- Azure OpenAI, HTTP
     nvidia_build         -- NVIDIA Build, HTTP
+    openrouter            -- OpenRouter, HTTP. Same OpenAI-compatible surface
+                             generate_pilot.py's rewriter stage already uses,
+                             extended here to evaluated-model calls.
     local_hf              -- a local OpenAI-compatible server (e.g. vLLM) at
                              localhost:8000. Requires that server already running.
     local_transformers    -- loads the model directly in-process via `transformers`
@@ -24,11 +27,13 @@ Four providers:
                              first call per process is slow (real model load).
                              NOTE: MedGemma specifically is a gated model on
                              Hugging Face -- needs HF_TOKEN set (see below), even
-                             though this provider needs no Azure/NVIDIA-style key.
+                             though this provider needs no Azure/NVIDIA/OpenRouter
+                             -style key.
 
 Provider credentials come from environment variables (Kaggle Secrets sets these):
     AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT      (provider: azure_openai)
     NVIDIA_API_KEY                                   (provider: nvidia_build)
+    OPENROUTER_API_KEY                               (provider: openrouter)
     HF_TOKEN                                         (local_transformers, ONLY for
                                                        gated HF models -- MedGemma
                                                        needs this; a non-gated model
@@ -228,7 +233,9 @@ def available_models(cfg: dict, mock: bool = False) -> tuple[list[str], list[str
 
 
 # --------------------------------------------------------------------------- #
-# Provider client -- one code path for all three OpenAI-compatible backends
+# Provider client -- one code path for all four OpenAI-compatible backends
+# (azure_openai, nvidia_build, openrouter, local_hf); local_transformers is not
+# OpenAI-compatible and never reaches this code (see _call_with_retry).
 # --------------------------------------------------------------------------- #
 
 
@@ -247,6 +254,9 @@ def _missing_credential(provider: str) -> str | None:
     elif provider == "nvidia_build":
         if not os.environ.get("NVIDIA_API_KEY"):
             return "NVIDIA_API_KEY not set"
+    elif provider == "openrouter":
+        if not os.environ.get("OPENROUTER_API_KEY"):
+            return "OPENROUTER_API_KEY not set"
     # local_hf (vLLM) needs no credential -- reachability is checked separately,
     # since "no key needed" and "server not actually running" are different problems.
     return None
@@ -300,6 +310,24 @@ def _make_client(provider: str):
             max_retries=0,
             timeout=CLIENT_TIMEOUT_SECONDS,
         )
+    if provider == "openrouter":
+        # Same base_url and OpenAI-compatible surface generate_pilot.py's own
+        # build_client() already uses for the rewriter -- kept consistent
+        # deliberately rather than reinvented, even though this is a different
+        # script and a different stage (evaluated-model calls, not rewriting).
+        # Unlike generate_pilot.py's client, this one does NOT set the
+        # allow_fallbacks=False / require_parameters=True extra_body flags --
+        # those exist there to guarantee the pinned rewriter model never
+        # silently falls back to a different one mid-run; evaluated-model calls
+        # here are single-letter multiple-choice, not the kind of generation
+        # where a silent model swap would be easy to miss, and every response
+        # gets scored against a known gold answer either way.
+        return OpenAI(
+            api_key=os.environ["OPENROUTER_API_KEY"],
+            base_url="https://openrouter.ai/api/v1",
+            max_retries=0,
+            timeout=CLIENT_TIMEOUT_SECONDS,
+        )
     if provider == "local_hf":
         # vLLM's OpenAI-compatible server. Any non-empty api_key is accepted.
         return OpenAI(api_key="vllm-local", base_url="http://localhost:8000/v1",
@@ -317,6 +345,8 @@ def _credential_fingerprint(provider: str) -> str:
         return f"{os.environ.get('AZURE_OPENAI_API_KEY', '')}:{os.environ.get('AZURE_OPENAI_ENDPOINT', '')}"
     if provider == "nvidia_build":
         return os.environ.get("NVIDIA_API_KEY", "")
+    if provider == "openrouter":
+        return os.environ.get("OPENROUTER_API_KEY", "")
     return ""  # local_hf has no credential to fingerprint
 
 

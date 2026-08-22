@@ -192,11 +192,16 @@ def test_mock_mode_bypasses_credential_checks(isolated_config):
 
 
 def test_real_mode_reports_missing_credentials(isolated_config):
+    # gpt_closed now has a real (provisional) name and provider=openrouter
+    # (see config.yaml), so it's no longer skipped for "not chosen" -- it's
+    # skipped for the same reason llama3 is: no key in the environment. This
+    # test intentionally tracks the real config, so it had to change when that
+    # config changed, rather than silently asserting a now-stale reason.
     _, cfg = isolated_config
     ready, skipped = available_models(cfg, mock=False)
     assert ready == []
     assert any("NVIDIA_API_KEY" in s for s in skipped)
-    assert any("gpt_closed" in s and "not chosen" in s for s in skipped)
+    assert any("gpt_closed" in s and "OPENROUTER_API_KEY" in s for s in skipped)
 
 
 # --------------------------------------------------------------------------- #
@@ -300,6 +305,76 @@ def test_client_cache_invalidates_on_credential_change(monkeypatch):
     c2 = harness._client_for("nvidia_build")
     assert c2 is not c1, "stale client reused after credential changed"
     assert len(call_log) == 2
+
+
+# --------------------------------------------------------------------------- #
+# openrouter provider -- added when gpt_closed moved off azure_openai
+# --------------------------------------------------------------------------- #
+
+
+def test_openrouter_missing_credential_reported():
+    import os as _os
+
+    had = _os.environ.pop("OPENROUTER_API_KEY", None)
+    try:
+        reason = harness._missing_credential("openrouter")
+        assert reason is not None and "OPENROUTER_API_KEY" in reason
+    finally:
+        if had is not None:
+            _os.environ["OPENROUTER_API_KEY"] = had
+
+
+def test_openrouter_client_uses_correct_base_url(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key-for-test")
+    harness._client_cache.clear()
+    client = harness._make_client("openrouter")
+    assert str(client.base_url).rstrip("/") == "https://openrouter.ai/api/v1"
+
+
+def test_openrouter_client_has_explicit_short_timeout(monkeypatch):
+    # Same reasoning as the nvidia_build version of this test above: every
+    # OpenAI-compatible client must override the SDK's ~600s default explicitly.
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key-for-test")
+    harness._client_cache.clear()
+    client = harness._make_client("openrouter")
+    assert client.timeout == harness.CLIENT_TIMEOUT_SECONDS
+    assert client.timeout < 600
+
+
+def test_openrouter_client_cache_invalidates_on_credential_change(monkeypatch):
+    call_log = []
+
+    def fake_make_client(provider):
+        call_log.append(provider)
+        return object()
+
+    harness._client_cache.clear()
+    monkeypatch.setattr(harness, "_make_client", fake_make_client)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key-v1")
+
+    c1 = harness._client_for("openrouter")
+    c1_again = harness._client_for("openrouter")
+    assert c1 is c1_again
+    assert len(call_log) == 1
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key-v2-corrected")
+    c2 = harness._client_for("openrouter")
+    assert c2 is not c1, "stale client reused after credential changed"
+    assert len(call_log) == 2
+
+
+def test_openrouter_and_nvidia_build_cached_independently(monkeypatch):
+    # Two different providers must never collide in _client_cache even though
+    # both are OpenAI-compatible and both route through the same _make_client
+    # dispatch -- the cache key is (provider, credential), not credential alone.
+    monkeypatch.setenv("NVIDIA_API_KEY", "same-looking-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "same-looking-key")
+    harness._client_cache.clear()
+
+    nvidia_client = harness._client_for("nvidia_build")
+    openrouter_client = harness._client_for("openrouter")
+    assert nvidia_client is not openrouter_client
+    assert len(harness._client_cache) == 2
 
 
 # --------------------------------------------------------------------------- #

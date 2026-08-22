@@ -72,8 +72,8 @@ models:
 
   evaluated:
     - id: gpt_closed
-      provider: azure_openai
-      name: null # <-- TODO: lock closed comparison model with Kiran
+      provider: openrouter
+      name: openai/gpt-4o
       version: null
       temperature: 0
       max_tokens: 16

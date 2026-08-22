@@ -4,8 +4,7 @@ straight through to a scored results file.
 
 This is Patrick's Week 2 task ("Smoke-test the full pipeline end to end on the
 pilot: 100 items x 3 levels x every model, straight through to a scored
-results file. Measure wall-clock time and dollar cost per 100 items."),
-covered here since Patrick is away.
+results file. Measure wall-clock time and dollar cost per 100 items.").
 
 Chain:
     data/pilot_rewrites.jsonl

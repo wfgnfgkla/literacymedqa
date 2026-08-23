@@ -155,6 +155,35 @@ This writes:
 By default, scoring uses `prompt_condition=plain`, `clinical_level=a`, and
 `low_literacy_level=c`. Override those only if the locked config names change.
 
+To give the team an early preview of the final results format from pilot rows:
+
+```bash
+python src/draft_results_table.py data/pilot_results.jsonl
+```
+
+This writes `data/pilot_draft_results_table.csv` and
+`data/pilot_draft_results_table.md`, combining accuracy by level, `acc(a)-acc(c)`,
+`acc(b)-acc(c)`, right-to-wrong flips, McNemar p-values, and clarify-prompt
+recovery when the pilot includes the intervention rows.
+
+## Realism Gate
+
+Blind-rater labels should use the template in `templates/realism_ratings_template.csv`:
+
+```csv
+item_id,gold_label,rater_id,rating
+```
+
+Use `gold_label` and `rating` values of `real` or `generated`. Then run:
+
+```bash
+python src/realism_gate.py data/realism_ratings.csv --out-dir data/realism_gate
+```
+
+This writes per-rater accuracy, Fleiss' kappa, and a one-paragraph gate verdict.
+The blind-rater gate passes when overall real-vs-generated identification accuracy
+is at or below 75%.
+
 ## Reproducibility
 
 Nothing in `config.yaml` or `prompts/` should change once a run has started. If something

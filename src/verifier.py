@@ -162,6 +162,7 @@ class Verifier:
         self.max_retries = max_retries
         self.bare_tol = bare_number_tolerance
         self.last_served_by = ""      # set per call by _call_openrouter
+        self.last_usage = {}          # token counts, so cost is measured not estimated
         self.model = model or {
             "anthropic": "claude-sonnet-4-6",
             "openai": "gpt-4o-2024-11-20",
@@ -289,6 +290,7 @@ class Verifier:
         with urllib.request.urlopen(req, timeout=120) as r:
             data = json.loads(r.read())
         self.last_served_by = str(data.get("provider") or "")
+        self.last_usage = data.get("usage") or {}
         return data["choices"][0]["message"]["content"]
 
     @staticmethod
@@ -315,6 +317,7 @@ class Verifier:
             call = self._call_openai
         last, t0 = None, time.time()
         self.last_served_by = ""
+        self.last_usage = {}
         for attempt in range(self.max_retries):
             try:
                 raw = call(prompt)

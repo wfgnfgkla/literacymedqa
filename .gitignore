@@ -7,4 +7,11 @@ data/*.jsonl
 !data/.gitkeep
 # Pilot rewrites are shared deliberately -- the team needs this file.
 !data/pilot_rewrites.jsonl
+# The blind audit sheet is shared; the KEY deliberately is not. Committing both
+# would put the verifier's verdicts one `git show` away from the reviewer and
+# defeat the blinding the sheet exists to provide.
+# The key is ignored EXPLICITLY: `data/*.jsonl` above never covered .csv, so
+# without this line the answer key is one `git add -A` away from the repo.
+data/pilot_audit_key.csv
+!data/pilot_audit_sheet.csv
 .DS_Store

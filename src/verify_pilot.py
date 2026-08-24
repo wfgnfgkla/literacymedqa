@@ -69,6 +69,30 @@ DEFAULT_OUT = ROOT / "data" / "pilot_verdicts.jsonl"
 LEVELS = ("a", "b", "c")
 GENERATED = ("b", "c")          # (a) is copied, never generated, never regenerated
 
+# Structural flags that GATE, not merely annotate.
+#
+# The LLM verifier does not catch a demographic that is ABSENT. It caught
+# changed_demographic 4/4 on the adversarial set, but those cases ALTER a
+# demographic, which is a visible difference between two texts; an omission
+# contradicts nothing in the original, so a verifier framed around "did a
+# clinical fact change" passes it. Measured over this pilot: 30 level (c)
+# rewrites are missing sex and the verifier passed 25 of them, and it used
+# change_type changed_demographic zero times across all 300 instances.
+#
+# Age and sex head the decisive-facts list and sex is decisive in MedQA
+# constantly, so these are promoted from advisory to blocking. The check is
+# already computed per level by generate_pilot.py -- this costs no model call.
+# Level (a) is never gated: it carries no such flags, being the copied stem.
+GATING_FLAGS = ("missing_sex_", "missing_age_")
+
+
+def gating_flags(level: str, structural_flags: list) -> list:
+    """Blocking structural flags for this level, e.g. missing_sex_c on level (c)."""
+    if level not in GENERATED:
+        return []
+    want = {prefix + level for prefix in GATING_FLAGS}
+    return [f for f in (structural_flags or []) if f in want]
+
 
 def write_row(path: Path, row: dict) -> None:
     """Append and fsync, so a crash costs the current item and not the run."""
@@ -180,16 +204,22 @@ def main() -> int:
             continue
 
         verdicts: dict[str, object] = {}
+        gates: dict[str, list] = {}
         for lvl in LEVELS:
             if (item_id, lvl) in skip:
                 continue
             verdicts[lvl] = verify(original, row[f"level_{lvl}"], options, gold, item_id, lvl)
+            gates[lvl] = gating_flags(lvl, row.get("structural_flags"))
 
         # Regenerate only the generated levels that FAILed. One call yields both.
         attempts = {lvl: 0 for lvl in GENERATED}
         text = {lvl: row[f"level_{lvl}"] for lvl in GENERATED}
         regenerated = {lvl: False for lvl in GENERATED}
-        failing = [l for l in GENERATED if l in verdicts and verdicts[l].verdict == "FAIL"]
+        # A level-instance fails the fidelity gate if the LLM verifier failed it OR a
+        # blocking structural flag is present. Both are recorded separately below so
+        # the LLM-only and combined rates stay separable.
+        failing = [l for l in GENERATED if l in verdicts
+                   and (verdicts[l].verdict == "FAIL" or gates.get(l))]
         blocked = set()
 
         while (not args.no_regen and failing
@@ -219,27 +249,38 @@ def main() -> int:
                       f"{str(exc)[:80]}")
                 break
 
+            # A candidate must clear BOTH checks. Accepting one that the LLM likes but
+            # that still drops the patient's sex would just relocate the hole.
+            cand_struct = gp.structural_flags(original, new["b"], new["c"])
             for lvl in list(failing):
                 attempts[lvl] += 1
                 cand = new[lvl]
+                cand_gate = gating_flags(lvl, cand_struct)
                 r = verify(original, cand, options, gold, item_id, lvl)
-                if r.verdict != "FAIL":
+                if r.verdict != "FAIL" and not cand_gate:
                     text[lvl] = cand
                     verdicts[lvl] = r
+                    gates[lvl] = []
                     regenerated[lvl] = True
                     failing.remove(lvl)
                 elif attempts[lvl] >= max_attempts:
                     verdicts[lvl] = r
+                    gates[lvl] = cand_gate
                     failing.remove(lvl)
 
         for lvl in LEVELS:
             if lvl not in verdicts:
                 continue
             r = verdicts[lvl]
-            dropped = (lvl in GENERATED and r.verdict == "FAIL"
-                       and attempts.get(lvl, 0) >= max_attempts and lvl not in blocked)
-            pending = (lvl in GENERATED and r.verdict == "FAIL" and not dropped)
-            stats[lvl][r.verdict] += 1
+            gate = gates.get(lvl, [])
+            failed_gate = lvl in GENERATED and (r.verdict == "FAIL" or bool(gate))
+            dropped = (failed_gate and attempts.get(lvl, 0) >= max_attempts
+                       and lvl not in blocked)
+            pending = failed_gate and not dropped
+            stats[lvl]["FAIL" if failed_gate else r.verdict] += 1
+            stats[lvl]["llm_" + r.verdict] += 1
+            if gate and r.verdict != "FAIL":
+                stats[lvl]["GATED_ONLY"] += 1
             if dropped:
                 stats[lvl]["DROPPED"] += 1
             if pending:
@@ -247,7 +288,10 @@ def main() -> int:
             write_row(out_path, {
                 "item_id": item_id,
                 "level": lvl,
-                "verdict": r.verdict,
+                "verdict": "FAIL" if failed_gate else r.verdict,
+                "llm_verdict": r.verdict,
+                "gating_flags": gate,
+                "gated_by_structural": bool(gate) and r.verdict != "FAIL",
                 "dropped": dropped,
                 "regen_pending": pending,
                 "regen_blocked": lvl in blocked,
@@ -275,18 +319,35 @@ def main() -> int:
         extra = f"  regen={ {k: v for k, v in attempts.items() if v} }" if any(attempts.values()) else ""
         print(f"  [{i}/{len(rows)}] {item_id}  {line}{extra}")
 
+    labels = {"a": "(a) control, copied", "b": "(b) plain", "c": "(c) low literacy"}
     print()
     print("  DROP RATE PER LEVEL -- reported separately, never pooled")
-    print(f"  {'level':22s} {'n':>4} {'PASS':>6} {'REVIEW':>7} {'FAIL':>6} {'DROPPED':>8}  drop rate")
+    print()
+    print("  LLM VERIFIER ALONE")
+    print(f"  {'level':22s} {'n':>4} {'PASS':>6} {'REVIEW':>7} {'FAIL':>6}")
+    for lvl in LEVELS:
+        s = stats[lvl]
+        n = s["llm_PASS"] + s["llm_REVIEW"] + s["llm_FAIL"]
+        if not n:
+            continue
+        print(f"  {labels[lvl]:22s} {n:>4} {s['llm_PASS']:>6} {s['llm_REVIEW']:>7} "
+              f"{s['llm_FAIL']:>6}")
+    print()
+    print("  LLM VERIFIER + STRUCTURAL GATE (missing_sex_*, missing_age_*)")
+    print(f"  {'level':22s} {'n':>4} {'PASS':>6} {'REVIEW':>7} {'FAIL':>6} {'DROPPED':>8} "
+          f"{'gate-only':>10}  drop rate")
     for lvl in LEVELS:
         s = stats[lvl]
         n = s["PASS"] + s["REVIEW"] + s["FAIL"]
         if not n:
             continue
-        label = {"a": "(a) control, copied", "b": "(b) plain", "c": "(c) low literacy"}[lvl]
         rate = f"{s['DROPPED'] / n * 100:.0f}%" if lvl in GENERATED else "n/a (control)"
-        print(f"  {label:22s} {n:>4} {s['PASS']:>6} {s['REVIEW']:>7} {s['FAIL']:>6} "
-              f"{s['DROPPED']:>8}  {rate}")
+        print(f"  {labels[lvl]:22s} {n:>4} {s['PASS']:>6} {s['REVIEW']:>7} {s['FAIL']:>6} "
+              f"{s['DROPPED']:>8} {s['GATED_ONLY']:>10}  {rate}")
+    print()
+    print("  gate-only = instances the LLM verifier passed and the structural check")
+    print("  caught. That column is the finding: it is the hole the LLM verifier")
+    print("  cannot see.")
     pend = sum(stats[l]["PENDING"] for l in GENERATED)
     if pend:
         print()

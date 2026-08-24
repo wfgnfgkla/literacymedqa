@@ -2,6 +2,71 @@
 
 Every config or prompt version bump gets an entry, with the reason and what was regenerated.
 
+## STRUCTURAL FLAGS PROMOTED TO GATING, 2026-08-24
+
+`missing_sex_{b,c}` and `missing_age_{b,c}` now block an item rather than annotate it.
+`prompts/verifier_v1.txt` is untouched: this needed no model change, because the check
+was already computed per level by generate_pilot.py and already carried in every verdict
+row. Level (a) is never gated -- it is the copied stem and carries no such flags.
+
+Applied to both generated levels, not level (c) alone. The hole is identical at level (b):
+7 level (b) rewrites are missing sex and 5 are missing age, and gating only (c) would have
+left those passing.
+
+### The comparison, which is the finding
+
+    LLM VERIFIER ALONE
+    level                     n  PASS  REVIEW  FAIL
+    (a) control, copied     100   100       0     0
+    (b) plain               100    97       3     0
+    (c) low literacy        100    86      13     1
+
+    LLM VERIFIER + STRUCTURAL GATE
+    level                     n  PASS  REVIEW  FAIL  DROPPED  gate-only  drop rate
+    (a) control, copied     100   100       0     0        0          0  n/a -- control
+    (b) plain               100    90       3     7        7          7  7%
+    (c) low literacy        100    64       8    28       28         27  28%
+
+`gate-only` counts instances the LLM verifier PASSED and the structural check caught: 7 at
+level (b) and 27 at level (c). That column is the whole finding. The LLM verifier alone
+put the level (c) drop rate at 1%; with the structural gate it is 28%. Nearly all of that
+difference is a demographic the rewrite dropped and the verifier could not see, because an
+omission contradicts nothing in the original.
+
+The much higher drop rate at level (c) than at level (b) -- 28% against 7%, a 4x gap on
+the same items and the same rewriter -- is itself a result for the paper. Low-literacy
+rewriting loses the patient's sex about four times as often as plain-language rewriting
+does.
+
+Items retaining all three levels fall from 99 to 72.
+
+### Regeneration barely helps, and that is informative
+
+42 level-instances failed the combined gate. Each got up to 3 fresh rewrites from the same
+pinned rewriter and frozen prompt. Only 7 recovered; 35 were dropped after all 3 attempts.
+
+If demographic omission were random per call, three attempts at the roughly two-thirds
+compliance v5 shows would recover almost everything. It did not, so the failure is
+ITEM-CORRELATED rather than random: for a given stem the rewriter tends to omit sex every
+time. Retrying is close to useless here, which means the fix has to be in the prompt (the
+v6 direction already recorded: age and sex in the same clause, folded into content) rather
+than in more attempts. It also means the 3-attempt cap is not what is limiting recovery.
+
+A candidate must clear BOTH checks to be accepted. Accepting one the LLM liked that still
+dropped the patient's sex would just relocate the hole. Structural screening runs first
+and costs nothing, so a candidate that still omits sex never consumes a verifier call.
+
+### Audit sheet rebuilt and shared
+
+The sheet is rebuilt from the 165 surviving generated instances (was 199 before gating).
+`data/pilot_audit_sheet.csv` is now committed so reviewers can get it. `data/pilot_audit_key.csv`
+is NOT, and is ignored explicitly rather than incidentally: `data/*.jsonl` never covered
+.csv, so before this the answer key was one `git add -A` away from the repo. Committing
+both would put the verdicts one `git show` from the reviewer and defeat the blinding.
+
+Cost for this pass: $0.11 rewriter (regeneration) plus $0.01 verifier. Cumulative across
+every stage this session: ~$0.57.
+
 ## VERIFIER RUN — adversarial gate + 100-item pilot, config_version 6, 2026-08-24
 
 **Adversarial gate: PASS.** sensitivity 20/20 = 1.00 (CI95 0.839-1.00), FPR 0/20 = 0.00,

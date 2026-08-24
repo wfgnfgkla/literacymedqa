@@ -1,0 +1,4 @@
+model,level,prompt_condition,n,correct_n,accuracy
+openai/gpt-4o,a,plain,100,90,0.9
+openai/gpt-4o,b,plain,100,77,0.77
+openai/gpt-4o,c,plain,100,76,0.76

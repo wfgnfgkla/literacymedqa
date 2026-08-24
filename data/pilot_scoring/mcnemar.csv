@@ -1,0 +1,2 @@
+model,prompt_condition,clinical_level,low_literacy_level,paired_n,both_correct,clinical_only,low_literacy_only,neither_correct,mcnemar_statistic,mcnemar_exact_p
+openai/gpt-4o,plain,a,c,100,75,15,1,9,10.5625,0.000518798828125

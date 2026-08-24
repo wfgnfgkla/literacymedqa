@@ -1,0 +1,2 @@
+model,paired_n,acc_a_clinical,acc_b_plain,acc_c_low_literacy,gap_a_minus_c,gap_b_minus_c,right_to_wrong_flip_rate,mcnemar_exact_p,acc_c_clarify,clarify_recovery
+openai/gpt-4o,100,0.9,0.77,0.76,0.14,0.010000000000000009,0.16666666666666666,0.000518798828125,nan,nan

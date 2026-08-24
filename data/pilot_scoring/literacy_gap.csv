@@ -1,0 +1,2 @@
+model,prompt_condition,clinical_level,low_literacy_level,paired_n,clinical_accuracy,low_literacy_accuracy,literacy_gap,right_to_wrong_n,clinical_correct_n,right_to_wrong_flip_rate
+openai/gpt-4o,plain,a,c,100,0.9,0.76,0.14,15,90,0.16666666666666666

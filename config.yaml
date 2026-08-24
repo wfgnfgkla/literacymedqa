@@ -3,7 +3,7 @@
 # and regenerate every affected artifact from scratch. Log the reason in CHANGELOG.md.
 
 run:
-  config_version: 5
+  config_version: 6
   lock_status: provisional
   seed: 20260807
   # Set to false once the pilot gates pass and full generation begins.
@@ -61,10 +61,18 @@ models:
 
   verifier:
     # Must differ from rewriter (Kiran's constraint) AND from every evaluated model,
-    # so no model checks its own output. Free-tier open model keeps this stage off
-    # the paid budget entirely.
-    provider: nvidia_build
-    name: qwen/qwen2.5-72b-instruct
+    # so no model checks its own output. It does: the rewriter is openai/gpt-4o-mini
+    # and the evaluated set is openai/gpt-4o, meta/llama-3.3-70b-instruct and
+    # google/medgemma-4b-it. Sharing the OpenRouter *provider* with two of those is
+    # fine -- the constraint is on models, not endpoints.
+    # Moved off nvidia_build 2026-08-24 to avoid managing a second API key. NOTE the
+    # model id changed spelling with it: OpenRouter serves this as `qwen-2.5`
+    # (hyphenated) and does NOT resolve the `qwen2.5` form nvidia_build used.
+    # NO LONGER FREE. The nvidia_build free tier kept this stage off the paid budget;
+    # OpenRouter bills it at $0.36/$0.40 per 1M. ~$0.23 to verify all 300 pilot
+    # level-instances, so still cheap, but it is no longer zero.
+    provider: openrouter
+    name: qwen/qwen-2.5-72b-instruct
     version: null # <-- TODO: lock
     temperature: 0
     max_tokens: 400
@@ -175,9 +183,11 @@ cost_rates_usd_per_1m:
   gpt-4o:
     input: 2.50
     output: 10.00
-  qwen/qwen2.5-72b-instruct:
-    input: null # nvidia_build free tier -- unconfirmed, left null rather than
-    output: null # assumed 0.0, so the tracker says "unknown" instead of "free"
+  # Verifier model. Keyed by the exact models.verifier.name string, as the tracker
+  # looks it up verbatim. From openrouter.ai/api/v1/models, 2026-08-24.
+  qwen/qwen-2.5-72b-instruct:
+    input: 0.36
+    output: 0.40
   meta/llama-3.3-70b-instruct:
     input: 0.0 # free tier
     output: 0.0

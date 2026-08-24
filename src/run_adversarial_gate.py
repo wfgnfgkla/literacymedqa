@@ -26,7 +26,7 @@ import argparse
 import json
 import math
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -51,8 +51,8 @@ def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--backend", default="rules",
-                    choices=["rules", "anthropic", "openai", "nvidia",
-                             "rules+anthropic", "rules+openai", "rules+nvidia"])
+                    choices=["rules", "anthropic", "openai", "openrouter",
+                             "rules+anthropic", "rules+openai", "rules+openrouter"])
     ap.add_argument("--model", default=None)
     ap.add_argument("--max-fpr", type=float, default=0.10)
     ap.add_argument("--tag", default=None)
@@ -80,6 +80,7 @@ def main() -> None:
             "evidence_rewrite": r.evidence_rewrite,
             "deterministic_flags": r.deterministic_flags,
             "confidence": r.confidence,
+            "served_by": r.served_by,
         })
         print(f"[{i:2d}/{len(cases)}] {c['case_id']:24s} {c['condition']:8s} "
               f"want {c['expected_verdict']:5s} got {r.verdict:6s} "
@@ -111,6 +112,8 @@ def main() -> None:
         "model": v.model,
         "prompt_sha256": v.prompt_sha,
         "n_corrupt": len(corrupt), "n_clean": len(clean),
+        # One upstream across every case is what the pinned-verifier claim rests on.
+        "served_by": dict(sorted(Counter(r["served_by"] for r in records).items())),
         "sensitivity": round(sens, 4),
         "sensitivity_ci95": [round(x, 4) for x in wilson(caught, len(corrupt))],
         "false_positive_rate": round(fpr, 4),

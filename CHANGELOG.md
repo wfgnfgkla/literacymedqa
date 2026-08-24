@@ -2,6 +2,63 @@
 
 Every config or prompt version bump gets an entry, with the reason and what was regenerated.
 
+## NOTE — verifier moved from nvidia_build to openrouter, 2026-08-24
+
+`models.verifier` changed from `nvidia_build / qwen/qwen2.5-72b-instruct` to
+`openrouter / qwen/qwen-2.5-72b-instruct`, and `verifier.py` gained a matching
+`openrouter` backend. Reason: OpenRouter is already in use for the rewriter, and this
+avoids managing a second API key for one stage.
+
+No artifact is affected. The verifier had never run — this stage has produced nothing
+yet — and `models.rewriter` is untouched, so `data/pilot_rewrites.jsonl` is unchanged.
+
+**The model id changed spelling with the provider, and this is not cosmetic.** OpenRouter
+serves this model as `qwen/qwen-2.5-72b-instruct`, hyphenated. The `qwen/qwen2.5-72b-instruct`
+form config previously carried is nvidia_build's spelling and returns no model on
+OpenRouter — verified against openrouter.ai/api/v1/models. Left unchanged, every verifier
+call would have failed. `cost_rates_usd_per_1m` was rekeyed to match, since the tracker
+looks the name up verbatim and a near-miss key silently reports $0.00.
+
+**This stage is no longer free.** The config comment previously said a free-tier open model
+kept the verifier off the paid budget. That was true of nvidia_build and is not true of
+OpenRouter, which bills this model at $0.36/$0.40 per 1M. Estimated ~$0.03 for the
+40-case adversarial gate and ~$0.23 to verify all 300 pilot level-instances before any
+regeneration. Small, but the "off the paid budget entirely" claim is now wrong and the
+comment has been corrected rather than left to mislead.
+
+The disjoint-sets rule still holds. The verifier (qwen) differs from the rewriter
+(openai/gpt-4o-mini) and from every evaluated model (openai/gpt-4o,
+meta/llama-3.3-70b-instruct, google/medgemma-4b-it). The verifier now shares an
+*endpoint* with the rewriter and with gpt_closed, which is not what the rule constrains —
+it is about models grading their own output, not about providers.
+
+**The verifier's OpenRouter calls are provider-pinned**, matching how
+`generate_pilot.py` pins the rewriter: `allow_fallbacks: false` and
+`require_parameters: true` in the request body, with the serving upstream recorded as
+`served_by` on every Verdict and summarised per run by the adversarial gate.
+
+OpenRouter fans one model id across upstreams that differ in quantization, so unpinned
+the same rewrite can be judged by materially different models on different runs, and the
+verdicts need not agree. Methods claims a pinned verifier, and these verdicts decide what
+enters the benchmark, so silent variation between runs is worse than a call that fails
+loudly. Pinning does mean a call now fails outright when the pinned upstream is down
+rather than quietly succeeding elsewhere; `_llm()`'s existing retry loop absorbs a
+transient outage, and HTTP errors now surface the response body so "no allowed provider
+available" is distinguishable from a generic 502 instead of both rendering as
+"HTTP Error 502".
+
+`served_by` is reset at the start of every `_llm()` call, so a failed verdict cannot
+inherit the previous call's upstream. The adversarial gate summary carries the distinct
+upstream counts across all 40 cases — one value there is what the pinned-verifier claim
+actually rests on, and more than one is a finding.
+
+**`run.config_version` bumped 5 -> 6** for this change, per the convention in config.yaml's
+own header. No artifact needs regenerating: the verifier has produced nothing yet, and
+`models.rewriter` is untouched, so `data/pilot_rewrites.jsonl` stands. Its rows remain
+stamped `config_version: 5`, which is correct — they were generated under 5. The bump is
+also the point of the note directly below about c85cea9: changing config without one is
+what created that gap, and repeating it here would undercut the complaint.
+
 ## NOTE — config.yaml changed in c85cea9 without a version bump
 
 Recorded so the reproducibility appendix stays honest. No artifact needs regenerating and

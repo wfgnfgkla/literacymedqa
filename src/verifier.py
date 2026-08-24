@@ -23,8 +23,8 @@ silently rounded to PASS -- a verifier with no abstain option quietly converts
 its own uncertainty into a clean item.
 
   from verifier import Verifier
-  v = Verifier(backend="rules")            # or "anthropic", "openai", "nvidia",
-                                           # "rules+anthropic", "rules+openai", "rules+nvidia"
+  v = Verifier(backend="rules")            # or "anthropic", "openai", "openrouter",
+                                           # "rules+anthropic", "rules+openai", "rules+openrouter"
   r = v.check(original, rewrite, options, gold_letter)
 """
 from __future__ import annotations
@@ -145,6 +145,7 @@ class Verdict:
     backend: str = ""
     prompt_sha256: str = ""
     model: str = ""
+    served_by: str = ""               # OpenRouter upstream that actually served the call
     latency_s: float = 0.0
     raw: str = ""
 
@@ -160,10 +161,11 @@ class Verifier:
         self.prompt_sha = hashlib.sha256(self.prompt.encode()).hexdigest()
         self.max_retries = max_retries
         self.bare_tol = bare_number_tolerance
+        self.last_served_by = ""      # set per call by _call_openrouter
         self.model = model or {
             "anthropic": "claude-sonnet-4-6",
             "openai": "gpt-4o-2024-11-20",
-            "nvidia": "qwen/qwen2.5-72b-instruct",
+            "openrouter": "qwen/qwen-2.5-72b-instruct",
         }.get(backend.split("+")[-1], "rules-only")
 
     # ------------------------------------------------------------ layer 1
@@ -248,31 +250,45 @@ class Verifier:
             data = json.loads(r.read())
         return data["choices"][0]["message"]["content"]
 
-    def _call_nvidia(self, prompt: str) -> str:
-        """NVIDIA Build. This is the backend config.yaml actually declares
-        (models.verifier: nvidia_build / qwen/qwen2.5-72b-instruct), and the only
-        one that satisfies the disjoint-sets rule now that openai/gpt-4o sits in
-        models.evaluated -- gpt-4o must not grade text it will later be scored on.
+    def _call_openrouter(self, prompt: str) -> str:
+        """OpenRouter. This is the backend config.yaml declares (models.verifier:
+        openrouter / qwen/qwen-2.5-72b-instruct), and it satisfies the disjoint-sets
+        rule: the verifier model differs from the rewriter (openai/gpt-4o-mini) and
+        from every evaluated model (openai/gpt-4o, meta/llama-3.3-70b-instruct,
+        google/medgemma-4b-it). Sharing the OpenRouter *endpoint* with the rewriter
+        and with gpt_closed is fine -- the rule is about a model grading its own
+        output, not about providers.
 
-        Same OpenAI-compatible surface and same base_url harness.py already uses
-        for nvidia_build, so credentials and endpoint stay consistent repo-wide.
+        Same OpenAI-compatible surface as _call_openai; different base_url and key.
+        The id is spelled `qwen-2.5` (hyphenated) deliberately: that is OpenRouter's
+        id for this model. The unhyphenated `qwen2.5` form the previous provider
+        used resolves to nothing here, so every call would 404.
         """
-        key = os.environ.get("NVIDIA_API_KEY")
+        key = os.environ.get("OPENROUTER_API_KEY")
         if not key:
-            raise RuntimeError("NVIDIA_API_KEY not set")
+            raise RuntimeError("OPENROUTER_API_KEY not set")
         body = json.dumps({
             "model": self.model, "temperature": 0, "max_tokens": 700,
-            # No response_format: NVIDIA Build does not accept it for every model,
-            # and a rejected parameter would fail the call outright. The pinned
-            # prompt already demands "a single JSON object and nothing else", and
-            # _parse() strips fences defensively, so JSON mode buys nothing here.
+            # Pinned exactly as generate_pilot.py pins the rewriter. OpenRouter fans
+            # one model id across upstreams that differ in quantization, so without
+            # this the same rewrite can be judged by different models on different
+            # runs and the verdicts need not agree. Methods claims a pinned verifier
+            # and these verdicts decide what enters the benchmark, so a call that
+            # fails loudly is preferable to one that silently drifts. The retry loop
+            # in _llm() absorbs a transient outage of the pinned upstream.
+            "provider": {"allow_fallbacks": False, "require_parameters": True},
+            # No response_format: structured-output support differs between upstreams,
+            # so a rejected parameter would fail non-deterministically. The pinned
+            # prompt already demands "a single JSON object and nothing else" and
+            # _parse() strips fences defensively.
             "messages": [{"role": "user", "content": prompt}],
         }).encode()
         req = urllib.request.Request(
-            "https://integrate.api.nvidia.com/v1/chat/completions", data=body,
+            "https://openrouter.ai/api/v1/chat/completions", data=body,
             headers={"content-type": "application/json", "authorization": f"Bearer {key}"})
         with urllib.request.urlopen(req, timeout=120) as r:
             data = json.loads(r.read())
+        self.last_served_by = str(data.get("provider") or "")
         return data["choices"][0]["message"]["content"]
 
     @staticmethod
@@ -293,17 +309,27 @@ class Verifier:
                   .replace("<<<GOLD>>>", gold))
         if "anthropic" in self.backend:
             call = self._call_anthropic
-        elif "nvidia" in self.backend:
-            call = self._call_nvidia
+        elif "openrouter" in self.backend:
+            call = self._call_openrouter
         else:
             call = self._call_openai
         last, t0 = None, time.time()
+        self.last_served_by = ""
         for attempt in range(self.max_retries):
             try:
                 raw = call(prompt)
                 return self._parse(raw), raw, time.time() - t0
             except (urllib.error.HTTPError, urllib.error.URLError, ValueError,
                     json.JSONDecodeError, RuntimeError) as e:
+                if isinstance(e, urllib.error.HTTPError):
+                    # With allow_fallbacks disabled, "no allowed provider available"
+                    # is now an expected failure mode. The bare HTTPError renders as
+                    # "HTTP Error 502" and says nothing about which; the body does.
+                    try:
+                        e = RuntimeError(f"HTTP {e.code}: "
+                                         f"{e.read().decode('utf-8', 'replace')[:300]}")
+                    except Exception:
+                        pass
                 last = e
                 time.sleep(1.5 * (attempt + 1))
         raise RuntimeError(f"verifier call failed after {self.max_retries} attempts: {last}")
@@ -366,7 +392,7 @@ class Verifier:
             jargon_removed=str(parsed.get("jargon_removed", "unknown")).lower(),
             confidence=conf, deterministic_flags=flags,
             backend=self.backend, prompt_sha256=self.prompt_sha, model=self.model,
-            latency_s=round(dt, 2), raw=raw,
+            served_by=self.last_served_by, latency_s=round(dt, 2), raw=raw,
         )
 
     @staticmethod

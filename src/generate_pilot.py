@@ -642,14 +642,40 @@ def main() -> int:
         out_path = ROOT / out_path
 
     skip = already_done(out_path) if args.resume else set()
-    pending = [r for r in rows if r[keys["id"]] not in skip]
 
-    # pilot_mode caps the run at pilot_n unless --limit says otherwise, so a bare
-    # `generate_pilot.py` during the pilot generates the pilot rather than all 500.
+    # Scope is decided from the FULL frozen set, BEFORE the resume filter. Slicing
+    # after the skip list would let --resume change the target: with 100 rows already
+    # written and n_items=300, slicing the 400 remaining would generate 300 more and
+    # land at 400 total, not 300.
+    #
+    # dataset.n_items is READ HERE and not merely declared. It used to be read only by
+    # validate_config.py, so it capped nothing: the run was bounded by pilot_mode or by
+    # the size of base_file, and n_items agreed with the outcome only because it
+    # happened to equal the frozen set size. Same shape of trap pilot_mode was.
+    n_items = (cfg.get("dataset") or {}).get("n_items")
+    if run_cfg.get("pilot_mode") and pilot_n:
+        target, scope = rows[:pilot_n], f"pilot_mode on, pilot_n={pilot_n}"
+    elif n_items:
+        if n_items > len(rows):
+            raise SystemExit(
+                f"dataset.n_items={n_items} exceeds the frozen set: "
+                f"{len(rows)} items in {cfg['dataset']['base_file']}. "
+                "Refusing to generate fewer items than the config declares. Either lower "
+                "n_items or re-freeze a larger base set -- silently producing "
+                f"{len(rows)} while the config says {n_items} is how a sample size stops "
+                "meaning anything."
+            )
+        target, scope = rows[:n_items], f"dataset.n_items={n_items}"
+    else:
+        target, scope = rows, "entire frozen set (n_items unset)"
+
+    pending = [r for r in target if r[keys["id"]] not in skip]
+
+    # --limit stays a smoke-test knob and deliberately applies AFTER the skip list:
+    # it means "give me N more calls", not "make the target N".
     if args.limit is not None:
         pending = pending[:args.limit]
-    elif run_cfg.get("pilot_mode") and pilot_n:
-        pending = pending[:pilot_n]
+        scope = f"--limit {args.limit} (overrides {scope})"
 
     print(f"  config          {args.config} (v{config_version}, lock_status={lock_status})")
     print(f"  rewriter        {rewriter['name']} @ {rewriter['version']}")
@@ -664,6 +690,7 @@ def main() -> int:
     print(f"  output          {out_path}")
     if args.resume:
         print(f"  resume          skipping {len(skip)} already-written items")
+    print(f"  scope           {scope}")
     print(f"  to process      {len(pending)} items")
     print(f"  levels          (a) copied verbatim | (b) generated | (c) generated")
 

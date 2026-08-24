@@ -47,11 +47,24 @@ still be about $1.34 for generation. N=500 traces to power, not to budget.
 `pilot_mode`/`pilot_n` or an explicit `--limit`. Today that is harmless because n_items
 (500) happens to equal the frozen set size (500), so both routes give the same answer.
 
-It is a latent trap rather than a current defect: setting n_items to, say, 300 would
+It was a latent trap rather than a current defect: setting n_items to, say, 300 would
 change nothing about what actually generates, and the mismatch would be invisible until
-someone counted rows. Left as-is because the two numbers agree and changing generation
-bounds is not part of locking N, but it should either be enforced or the field renamed to
-something that does not read like a cap.
+someone counted rows.
+
+**FIXED.** `generate_pilot.py` now reads `dataset.n_items` and bounds the run by it, and
+declaring more than the frozen set holds is a loud SystemExit rather than a silent
+under-produce -- generating 500 while the config says 900 is how a sample size stops
+meaning anything. Precedence is unchanged where it mattered: `pilot_mode`/`pilot_n` still
+wins when on, and `--limit` still overrides everything as a smoke-test knob. The run now
+prints a `scope` line naming which bound applied, so the number is never inferred from
+the row count afterwards.
+
+Restructuring this surfaced a second bug in the same lines. Scope was being sliced AFTER
+the resume filter, so `--resume` silently changed the target: with 100 rows already
+written and a 300-item target, slicing the 400 remaining produced 300 more and landed at
+400 total. The same was true of `pilot_n` -- a resumed pilot with 100 done would have
+generated 100 more, for 200. Scope is now taken from the full frozen set before the skip
+list, so a target means a total. Verified across all bounds including that resume case.
 
 ### Gate status at the time of this bump, for the record
 

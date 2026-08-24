@@ -2,6 +2,96 @@
 
 Every config or prompt version bump gets an entry, with the reason and what was regenerated.
 
+## READABILITY GATE — level (c) vs the real corpora, 2026-08-24
+
+Gate criterion (`gates.realism.max_fk_grade_delta`, 2.0): **PASSES on all eight
+combinations** of {all, surviving} x {median, mean} x {askdocs, meqsum}. Worst delta 0.48,
+best 0.03. Nothing was tuned; the thresholds and prompts are untouched.
+
+### MeSH is now pinned
+
+`data/reference/manifest_mesh.json` records the 2026 release, both source URLs, and the
+sha256 of the zip and the extracted XML, following `medqa_base.manifest.json`'s
+convention. The file itself is NOT committed -- 298.5 MB and NLM's to distribute.
+
+This closes a real reproducibility hole. `med_term_density` in `askdocs_metrics.csv`,
+`meqsum_metrics.csv` and `medqa_stems_metrics.csv` was computed against a MeSH file that
+was never committed and never pinned, so nobody could reproduce or even check that
+column. Note the manifest's own caveat: those existing columns predate the pin, so they
+are *asserted* to have used a 2026 file, not proven to. Everything from here is
+verifiable; the earlier corpus columns are only verifiable if they came from a file with
+this same hash, which is untested.
+
+The 2026 DTD parses correctly with the existing `parse_mesh_terms()` -- 267,012 terms,
+matching the "267k+" the docstring claims, with hypertension/myocardial infarction/
+creatinine/dyspnea/potassium all present. No parser change was needed; the tag-based
+`.iter()` approach the author chose over a rigid path is what made it survive the schema
+change.
+
+### Distributions, all three metrics
+
+    metric                    our med   askdocs med   %ile of askdocs   meqsum med   %ile of meqsum
+    flesch_kincaid_grade         7.11          7.50               44%         7.21              49%
+    med_term_density            10.03         10.13               49%        14.29              25%
+    mean_sentence_length        20.14         16.00               74%        13.00              85%
+
+FK and medical-term density land almost exactly on the real-patient corpus. Density at the
+49th percentile of askdocs is about as close as this could get, and it is the metric that
+most directly measures whether the jargon actually came out.
+
+### FINDING: sentence length does not match, and the prompt caused it
+
+Our median level (c) sentence runs 20.14 words against askdocs' 16.00 -- the 74th
+percentile of real patient writing, 85th against MeQSum. Three quarters of real patients
+write shorter sentences than our median rewrite.
+
+This matters because FK is a function of sentence length and syllables per word. Hitting
+the right FK with sentences 26% longer than real means our words must be correspondingly
+simpler. We arrive at the correct readability score by a different route than real
+patients take: long strings of simple words, where they write shorter sentences with
+harder words.
+
+It is directly traceable to rewriter_v5's C4, which instructs the model to reach the grade
+band via "longer, winding, run-on sentences that pile clauses together". That worked, and
+overshot. A blind rater looking for a tell has one available here, and the realism gate is
+exactly a blind-rater test, so this is worth weighing before that gate runs.
+
+Not fixed here -- prompts/ is frozen and this is a finding, not a defect to patch
+unilaterally. If a v6 happens for the demographics issue, capping sentence length is a
+cheap thing to fold in.
+
+### The denominator question does not change the verdict
+
+The fidelity gate dropped 28 level (c) items, so "our rewrites" could mean all 100 or the
+72 that survive. Both were run:
+
+    set          FK median   delta vs askdocs median   verdict
+    all (100)         7.11                      0.39   PASS
+    surviving (72)    7.02                      0.48   PASS
+
+The two differ by 0.09 of a grade level, and every combination passes either way. So the
+choice of denominator is not load-bearing for this gate and does not need escalating on
+its own account. The surviving set remains the defensible denominator for any claim about
+the released benchmark, since it is what would actually ship.
+
+### The config ambiguity is real and reportable
+
+`gates.realism.fk_delta_reference_statistic: median` pins which CORPUS statistic to compare
+against, but nothing pins which statistic to use on OUR side. Against askdocs:
+median-to-median gives 0.39, mean-to-median gives 0.20. Both pass at a 2.0 threshold, so
+the ambiguity is harmless today -- but it is only harmless because the margin is wide, and
+it should be pinned before it decides something.
+
+### FK band, which the median hides
+
+50 of 100 level (c) rewrites sit inside the prompt's own 6-8 target: 21 below, 29 above.
+On the surviving 72 it is 38 in band, 15 below, 19 above. The gate passes on central
+tendency while half the corpus is outside the band the prompt was written to hit. That is
+the same shape of result the pilot produced and it has not moved.
+
+`data/reference/level_c_metrics.csv` carries per-item metrics for all 100, with a
+`surviving` column, and no raw text -- same convention as the corpus metric files.
+
 ## STRUCTURAL FLAGS PROMOTED TO GATING, 2026-08-24
 
 `missing_sex_{b,c}` and `missing_age_{b,c}` now block an item rather than annotate it.

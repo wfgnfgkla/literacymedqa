@@ -1,0 +1,18 @@
+{
+  "source": "MeSH descriptor records (NLM), 2026 release",
+  "release_year": 2026,
+  "source_url": "https://nlmpubs.nlm.nih.gov/projects/mesh/MESH_FILES/xmlmesh/desc2026.xml",
+  "source_url_zip": "https://nlmpubs.nlm.nih.gov/projects/mesh/MESH_FILES/xmlmesh/desc2026.zip",
+  "desc_xml_sha256": "449792ed59ba4d60035e44724352f7361ec0dc945b67dcd821a50ff32f81bcdb",
+  "desc_xml_bytes": 312952703,
+  "desc_zip_sha256": "bb73dfdfe78cbfcd692ef399bb6df24750327ff62c4f53574826c56ba3d6a3f3",
+  "desc_zip_bytes": 16812755,
+  "terms_parsed": 267012,
+  "parser": "src/readability.py parse_mesh_terms() -- DescriptorName + every nested Term String, lowercased, 1-character terms dropped",
+  "parser_verified_against_2026_dtd": true,
+  "pinned_at_utc": "2026-08-24T00:00:00+00:00",
+  "why_not_committed": "298.5 MB uncompressed and it is NLM's file to distribute, not ours. Pinned by hash instead, the same way data/medqa_base.manifest.json pins the MedQA source.",
+  "why_pinned": "med_term_density in askdocs_metrics.csv, meqsum_metrics.csv and medqa_stems_metrics.csv was computed against a MeSH file that was never committed and never pinned, so those numbers could not be reproduced or even checked by anyone. This manifest closes that: re-download, verify the sha256, and the density column is reconstructible.",
+  "reproduce": "curl -o desc2026.zip https://nlmpubs.nlm.nih.gov/projects/mesh/MESH_FILES/xmlmesh/desc2026.zip && unzip desc2026.zip && sha256sum desc2026.xml",
+  "caveat": "The existing corpus density numbers predate this pin, so they are asserted to have used a 2026 descriptor file, not proven to. Anything computed from this manifest forward is verifiable; the earlier corpus columns are only verifiable if they were produced from a file with this same hash, which is untested."
+}

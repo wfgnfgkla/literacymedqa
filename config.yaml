@@ -3,11 +3,14 @@
 # and regenerate every affected artifact from scratch. Log the reason in CHANGELOG.md.
 
 run:
-  config_version: 6
+  config_version: 7
   lock_status: provisional
   seed: 20260807
   # Set to false once the pilot gates pass and full generation begins.
-  pilot_mode: true
+  # Turned off 2026-08-24 for full generation. While true this capped every run at
+  # pilot_n regardless of dataset.n_items, so a "full run" would have quietly
+  # produced 100 items.
+  pilot_mode: false
   pilot_n: 100
 
 dataset:
@@ -16,7 +19,16 @@ dataset:
   split: test
   # NOTE: the US test split is ~1,273 items. N cannot exceed it.
   # LOCK WITH MENTOR before full generation.
-  n_items: null # <-- TODO: lock N with Kiran
+  # Locked 2026-08-24 at 500. Traces to src/power.py's McNemar calculation, not to
+  # budget or taste: the gap=0.05 / pi_d=0.15 cell needs ~471 items, and 500 is that
+  # rounded up. It is also exactly what Dong froze in data/medqa_base.jsonl, so no
+  # resampling is required.
+  # CAVEAT, in power.py's own words: "Pick pi_d from the pilot, not from this table."
+  # The pilot measured rewrite properties, not model accuracy discordance -- no
+  # evaluated model has run yet -- so pi_d=0.15 is still ASSUMED, not measured. If the
+  # real discordance comes in much lower, N=500 will be under-powered and the claim
+  # has to soften; power.py says as much.
+  n_items: 500
   stratify_by: null # e.g. specialty, or null for simple random
   base_file: data/medqa_base.jsonl
   # Dong owns this file. Once committed, no item added or removed without a logged reason.

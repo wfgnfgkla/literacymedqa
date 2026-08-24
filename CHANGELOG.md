@@ -2,6 +2,68 @@
 
 Every config or prompt version bump gets an entry, with the reason and what was regenerated.
 
+## config_version 7 — N locked at 500, pilot mode off, 2026-08-24
+
+Two changes, both required before full generation can produce a full set.
+
+### dataset.n_items: null -> 500
+
+N is RECORDED, not chosen. It traces to `src/power.py`'s McNemar calculation: the
+gap=0.05 / pi_d=0.15 cell needs ~471 items, and 500 is that rounded up. Verified by
+running it rather than taking the README's word — power.py's own output reads "a 5-point
+gap with 15% of items flipping needs ~471 items". It is also exactly what Dong froze in
+`data/medqa_base.jsonl` (500 rows, manifest n=500, seed 20260811), so locking here
+requires no resampling and no change to the frozen set.
+
+**Caveat, in power.py's own words: "Pick pi_d from the pilot, not from this table."** The
+pilot measured rewrite properties, not model accuracy discordance — no evaluated model has
+run yet — so pi_d=0.15 remains ASSUMED, not measured. power.py is explicit about both
+directions: a large observed gap means N=500 is over-powered, and a small one means no
+feasible N inside a 1,273-item pool rescues it and the claim has to soften. The first
+evaluated-model run is what turns this from an assumption into a number.
+
+### run.pilot_mode: true -> false
+
+While true, `generate_pilot.py` capped every run at `pilot_n` (100) regardless of
+`dataset.n_items`, so a "full generation" would have silently produced 100 items against
+an unlocked N. Confirmed by dry run after the change: the generator now reports
+"to process 500 items" where it previously reported 100.
+
+### Cost projection at N=500
+
+From measured pilot spend, not estimated:
+
+    rewriter generation   $0.00107/item   ->  $0.54
+    verifier (3 levels)   $0.00161/item   ->  $0.81
+    combined                                  ~$1.35
+
+Cost is not a constraint on N at this scale — the full 1,253-item test-split pool would
+still be about $1.34 for generation. N=500 traces to power, not to budget.
+
+### NOTE: dataset.n_items is declared, not enforced
+
+`dataset.n_items` is read only by `validate_config.py`. No generation code reads it;
+`generate_pilot.py` processes the whole of `dataset.base_file` and is bounded only by
+`pilot_mode`/`pilot_n` or an explicit `--limit`. Today that is harmless because n_items
+(500) happens to equal the frozen set size (500), so both routes give the same answer.
+
+It is a latent trap rather than a current defect: setting n_items to, say, 300 would
+change nothing about what actually generates, and the mismatch would be invisible until
+someone counted rows. Left as-is because the two numbers agree and changing generation
+bounds is not part of locking N, but it should either be enforced or the field renamed to
+something that does not read like a cap.
+
+### Gate status at the time of this bump, for the record
+
+Locking N does not mean the gates are closed. As of this commit:
+
+- fidelity gate: RUN. Level (c) drop rate 28% with structural gating, 1% without.
+- readability half of the realism gate: PASSED (ea2861f).
+- blind-rater half of the realism gate: NEVER RUN. No ratings file, no output, and no
+  such artifact in any commit in the repo's history — only Yuka's scorer, an empty
+  template and its unit tests. It is additionally blocked on re-downloading the raw
+  askdocs text, which is not committed (only derived metrics and hashes are).
+
 ## READABILITY GATE — level (c) vs the real corpora, 2026-08-24
 
 Gate criterion (`gates.realism.max_fk_grade_delta`, 2.0): **PASSES on all eight

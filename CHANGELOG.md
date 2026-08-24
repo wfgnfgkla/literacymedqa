@@ -2,6 +2,97 @@
 
 Every config or prompt version bump gets an entry, with the reason and what was regenerated.
 
+## VERIFIER RUN — adversarial gate + 100-item pilot, config_version 6, 2026-08-24
+
+**Adversarial gate: PASS.** sensitivity 20/20 = 1.00 (CI95 0.839-1.00), FPR 0/20 = 0.00,
+0 clean cases sent to review. Every corruption category 4/4, including negation_flip,
+which the rules backend missed 4/4. answer-changing 0.400 -> 1.00, answer-preserving
+0.867 -> 1.00. served_by DeepInfra on all 40 calls. Week 1 exit criterion met. The
+script's own caveat stands: at n=20 the CI floor is 0.839, so this rules out a bad
+verifier rather than certifying a good one.
+
+**Pilot verdicts, per level, never pooled:**
+
+    level                     n  PASS  REVIEW  FAIL  DROPPED  drop rate
+    (a) control, copied     100   100       0     0        0  n/a -- control
+    (b) plain               100    97       3     0        0  0%
+    (c) low literacy        100    86      13     1        1  1%
+
+2 level (c) instances needed regeneration; 1 recovered on attempt 1, 1 was dropped after
+all 3 attempts. 99 of 100 items retain all three levels. served_by DeepInfra on all 300
+verification calls, so the pin held across the whole run.
+
+**Level (a) came back 100/100 PASS, which is the result that licenses the rest.** It is
+the unmodified stem verified against itself, so any failure would have been a verifier
+false positive. There were none, so the (b) and (c) numbers are not resting on a verifier
+that fails clean text.
+
+Cost: $0.15 verification (315 calls) plus ~$0.005 regeneration. Cumulative across every
+stage this session: ~$0.46.
+
+### FINDING: the verifier does not catch MISSING demographics
+
+This is the gap worth acting on. The structural check in generate_pilot.py flags 30 level
+(c) rewrites as missing patient sex and 11 as missing age. The verifier passed 25 of the
+30 and 8 of the 11 clean, and across all 300 level-instances it used the change_type
+`changed_demographic` exactly ZERO times.
+
+It is not that the verifier cannot see demographics: the adversarial gate caught
+changed_demographic 4/4. The distinction is that the adversarial cases ALTER a
+demographic, which is a detectable difference between two texts, while the pilot rewrites
+OMIT one. A verifier framed around "did a clinical fact change" does not fire on a fact
+that is simply absent from the rewrite, because nothing in the rewrite contradicts the
+original.
+
+Sex is decisive in MedQA constantly, so 25 items currently pass the fidelity gate while
+being unrecoverable on sex. Two ways to close it, neither taken here because
+prompts/verifier_v1.txt is frozen and is Dong's:
+
+- extend the verifier prompt to ask whether every decisive fact is still RECOVERABLE,
+  not merely unchanged; or
+- treat the structural missing_sex_c / missing_age_c flags as gating rather than
+  advisory, which needs no model change at all and is already computed.
+
+Until then the structural flags are the only thing catching this, and they are carried
+into every verdict row in data/pilot_verdicts.jsonl so the affected items are addressable
+rather than invisible.
+
+### Temperature 0 is not bitwise reproducible here
+
+Regenerating a failed item with the same pinned rewriter, same frozen prompt, same seed
+and temperature 0 produced materially different text. That is what makes the 3-attempt
+retry policy meaningful rather than three identical calls, so it works in our favour --
+but it confirms config.yaml's own warning never to claim bitwise reproducibility on the
+strength of a seed. The prompt hash and the version pin remain the real provenance
+anchors.
+
+### Environment: verifier and rewriter cannot share a process on this machine
+
+verifier.py calls through urllib, which works only with pip_system_certs' truststore
+injection ACTIVE. The rewriter's openai SDK works only with it REMOVED, because under
+Python 3.14 stdlib ssl's own super(SSLContext, SSLContext) resolves to truststore's
+replacement class and any verify_mode assignment recurses infinitely. Three workarounds
+were tried and all fail on one side or the other: SSL_CERT_FILE pointing at certifi, a
+certifi-backed context handed to httpx, and recovering the genuine SSLContext from the
+class MRO.
+
+So verification ran with --no-regen first, and the two regenerations ran as a separate
+process with the injection removed, their candidates verified back in the first mode. A
+FAIL with no attempt spent is recorded as regen_pending, never as a drop -- reporting an
+unattempted item as dropped would overstate exactly the number the paper quotes. This is
+a machine-local defect, so no workaround was added to repo code; verify_pilot.py runs end
+to end in one process on a normal environment.
+
+### Manual audit sheet
+
+data/pilot_audit_sheet.csv (150 rows, reviewer copy) and data/pilot_audit_key.csv
+(verdicts, scorer copy). Drawn from the 199 surviving generated (b)/(c) instances at
+run.seed, simple random rather than stratified toward disagreements, which would inflate
+apparent disagreement and bias kappa. Rows are shuffled before audit_ids are assigned, so
+neither id nor file order encodes verdict or level -- verified: non-PASS splits 6/6 across
+the two halves. The sheet carries no verifier output and no item_id; the mapping lives
+only in the key.
+
 ## NOTE — verifier moved from nvidia_build to openrouter, 2026-08-24
 
 `models.verifier` changed from `nvidia_build / qwen/qwen2.5-72b-instruct` to

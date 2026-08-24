@@ -23,7 +23,8 @@ silently rounded to PASS -- a verifier with no abstain option quietly converts
 its own uncertainty into a clean item.
 
   from verifier import Verifier
-  v = Verifier(backend="rules")            # or "anthropic", "openai", "rules+anthropic", "rules+openai"
+  v = Verifier(backend="rules")            # or "anthropic", "openai", "nvidia",
+                                           # "rules+anthropic", "rules+openai", "rules+nvidia"
   r = v.check(original, rewrite, options, gold_letter)
 """
 from __future__ import annotations
@@ -162,6 +163,7 @@ class Verifier:
         self.model = model or {
             "anthropic": "claude-sonnet-4-6",
             "openai": "gpt-4o-2024-11-20",
+            "nvidia": "qwen/qwen2.5-72b-instruct",
         }.get(backend.split("+")[-1], "rules-only")
 
     # ------------------------------------------------------------ layer 1
@@ -246,6 +248,33 @@ class Verifier:
             data = json.loads(r.read())
         return data["choices"][0]["message"]["content"]
 
+    def _call_nvidia(self, prompt: str) -> str:
+        """NVIDIA Build. This is the backend config.yaml actually declares
+        (models.verifier: nvidia_build / qwen/qwen2.5-72b-instruct), and the only
+        one that satisfies the disjoint-sets rule now that openai/gpt-4o sits in
+        models.evaluated -- gpt-4o must not grade text it will later be scored on.
+
+        Same OpenAI-compatible surface and same base_url harness.py already uses
+        for nvidia_build, so credentials and endpoint stay consistent repo-wide.
+        """
+        key = os.environ.get("NVIDIA_API_KEY")
+        if not key:
+            raise RuntimeError("NVIDIA_API_KEY not set")
+        body = json.dumps({
+            "model": self.model, "temperature": 0, "max_tokens": 700,
+            # No response_format: NVIDIA Build does not accept it for every model,
+            # and a rejected parameter would fail the call outright. The pinned
+            # prompt already demands "a single JSON object and nothing else", and
+            # _parse() strips fences defensively, so JSON mode buys nothing here.
+            "messages": [{"role": "user", "content": prompt}],
+        }).encode()
+        req = urllib.request.Request(
+            "https://integrate.api.nvidia.com/v1/chat/completions", data=body,
+            headers={"content-type": "application/json", "authorization": f"Bearer {key}"})
+        with urllib.request.urlopen(req, timeout=120) as r:
+            data = json.loads(r.read())
+        return data["choices"][0]["message"]["content"]
+
     @staticmethod
     def _parse(raw: str) -> dict:
         t = raw.strip()
@@ -262,7 +291,12 @@ class Verifier:
                   .replace("<<<REWRITE>>>", rewrite)
                   .replace("<<<OPTIONS>>>", json.dumps(options, ensure_ascii=False, indent=2))
                   .replace("<<<GOLD>>>", gold))
-        call = self._call_anthropic if "anthropic" in self.backend else self._call_openai
+        if "anthropic" in self.backend:
+            call = self._call_anthropic
+        elif "nvidia" in self.backend:
+            call = self._call_nvidia
+        else:
+            call = self._call_openai
         last, t0 = None, time.time()
         for attempt in range(self.max_retries):
             try:

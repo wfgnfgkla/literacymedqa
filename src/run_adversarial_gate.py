@@ -51,7 +51,8 @@ def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--backend", default="rules",
-                    choices=["rules", "anthropic", "openai", "rules+anthropic", "rules+openai"])
+                    choices=["rules", "anthropic", "openai", "nvidia",
+                             "rules+anthropic", "rules+openai", "rules+nvidia"])
     ap.add_argument("--model", default=None)
     ap.add_argument("--max-fpr", type=float, default=0.10)
     ap.add_argument("--tag", default=None)

@@ -2,6 +2,127 @@
 
 Every config or prompt version bump gets an entry, with the reason and what was regenerated.
 
+## rewriter v6 — BUILT, TESTED, REJECTED. Reverted to v5, 2026-08-24
+
+v6 was written, run over the same 100 pilot items, and rejected on the results. Config is
+back to `prompts/rewriter_v5.txt` at `config_version 7`, and the v6 pilot data was
+discarded — the shared `data/pilot_rewrites.jsonl` on the remote never left v5.
+
+`prompts/rewriter_v6.txt` is kept in the repo deliberately. It is not dead weight: it is
+the cleanest evidence this project has about what prompt engineering can and cannot
+control, and that belongs in the paper's limitations rather than in someone's memory.
+
+### What v6 tried
+
+Two changes, C1/C2/C3 carried over byte-identical:
+
+1. **Age and sex in the SAME clause as each other**, position unprescribed. v4 kept the
+   pair together but as a terminal stub; v5 folded demographics into content but split the
+   pair, keeping the age and dropping the sex. Nobody had tried both constraints at once.
+2. **Sentence length capped at about 16 words**, matching the askdocs median, because our
+   median level (c) sentence ran 20.14 words — the 74th percentile of real patient writing
+   and a plausible tell for the blind-rater gate.
+
+The FK arithmetic was worked out BEFORE running, and the prompt was written against it:
+FK = 0.39*(words/sentence) + 11.8*(syllables/word) - 15.59, so cutting sentences from
+20.14 to 16.00 costs about 1.6 grade levels unless word length rises to compensate. Real
+patients hold grade 7.5 at 16 words because their syllables/word is 1.428 against our
+1.251. C4 said so explicitly, with worked everyday-vocabulary substitutions.
+
+### What v6 hit exactly
+
+    mean sentence length, level (c)     v5 20.14  ->  v6 16.00   askdocs 16.00
+    delta from the real corpus          +4.14     ->  +0.00
+
+An exact match, measured with readability.py's own function — the same code that produced
+the askdocs figure.
+
+    age stated, level (b)               83/88 (94%)  ->  87/88 (99%)
+    sex stated, level (b)               80/87 (92%)  ->  86/87 (99%)
+
+Level (b) demographics are essentially solved.
+
+### What v6 missed, and it was v6's whole purpose
+
+    sex stated, level (c)               57/87 (66%)  ->  55/87 (63%)
+    age+sex in one clause, level (c)    51/86        ->  51/86  (unchanged)
+
+The mechanism is visible in the text. On the same item:
+
+    level (b):  "I'm a 39-year-old man and I came to the emergency department..."
+    level (c):  "im 39 and i drive a truck for a living, just got back from U..."
+
+The two v6 rules fight each other at level (c). "im 39 and i drive a truck for a living"
+satisfies "fold the phrase into a clause doing other work" perfectly — it simply is not
+the clause carrying the sex. Level (b)'s formal register makes "I'm a 39-year-old man"
+the natural phrasing; level (c)'s casual register makes "im 39 and im a guy" feel
+redundant, so the model drops the second half.
+
+### What v6 broke
+
+    level (c) FK    median 7.11 -> 5.55    in band 50/100 -> 31/100
+                                           below 6:  21  ->  66
+
+    breakdown            w/sent    syl/word     FK
+    v5                    20.14       1.251   7.11
+    v6                    16.00       1.254   5.55
+    askdocs               16.00       1.428   7.50
+
+Syllables per word moved 1.251 -> 1.254. Essentially zero. The model complied with the
+structural half of C4 exactly and ignored the lexical half completely, so the sentence
+cut came straight off the grade level with nothing replacing it. It needed 1.301 to hold
+FK 6.0 at 16 words.
+
+### THE FINDING: structural instructions are followed, lexical ones are not
+
+Across four revisions the pattern is consistent and now well evidenced:
+
+    FOLLOWED (structural, countable, positional)
+      v3  ban on opening markers        5/5 openers -> 0/100      exact
+      v5  fold demographics into content  terminal stubs 54% -> 9%
+      v6  sentence length ~16 words     20.14 -> 16.00           exact
+      v6  age+sex adjacency at level (b)  92% -> 99%
+
+    IGNORED (lexical, about word choice)
+      v2/v3/v4  drop lab names          16 -> 16 -> 17 items, three revisions, no movement
+      v6        richer everyday vocabulary  1.251 -> 1.254 syllables/word, no movement
+
+The rewriter reliably follows instructions about WHERE something goes, WHETHER a form
+appears, and HOW LONG a unit is. It does not follow instructions about WHICH WORDS to
+choose. Every prompt change that succeeded was structural; every one that failed asked
+for a lexical shift. This is a limitation of prompt-based control of a rewriter, not a
+failure of any particular wording, and a fifth revision aimed at word choice should be
+expected to fail the same way.
+
+Practical consequence: the remaining level (c) demographic gap is not reachable by prompt
+wording. It is caught instead by the structural check in generate_pilot.py, which is
+exactly the kind of mechanism that does work — a countable property, checked outside the
+model.
+
+### Decision: accept the 28% drop, and state the power cost honestly
+
+Full generation proceeds at N=500 on v5, accepting a level (c) fidelity drop rate of 28%
+and letting the structural gate catch the demographic failures.
+
+**This leaves the study underpowered, and that is recorded here rather than discovered
+later.** At a 28% drop, N=500 yields about 360 items with all three levels intact. Using
+power.py's own formula at pi_d=0.15, alpha=0.05, power=0.80:
+
+    N = 500 (nothing dropped)   detects a gap of 4.9 points
+    N = 471 (power.py target)   detects a gap of 5.0 points
+    N = 360 (after drops)       detects a gap of 5.7 points
+
+So the released benchmark can detect a 5.7-point accuracy gap but not the 5.0-point gap
+the sample size was chosen for. If the true gap is larger than 5.7 points this costs
+nothing; if it falls between 5.0 and 5.7 the study will miss an effect it was designed to
+catch. pi_d=0.15 also remains ASSUMED until an evaluated model runs, so this figure can
+move in either direction once real discordance is measured.
+
+The honest options were: report the shortfall, generate more than 500 to absorb the drop
+rate, or relax the fidelity gate. Relaxing the gate would mean shipping items whose
+patient sex is unrecoverable, which is worse than being underpowered. Generating extra
+remains available and cheap (~$0.001 per item) if Kiran prefers to buy the power back.
+
 ## config_version 7 — N locked at 500, pilot mode off, 2026-08-24
 
 Two changes, both required before full generation can produce a full set.
